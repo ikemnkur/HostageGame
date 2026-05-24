@@ -1,0 +1,461 @@
+{
+  "id": "a85da643-f0cb-48a2-9a46-997aa55f1930",
+  "name": "2",
+  "players": [
+    {
+      "id": "c0f5d36a-336a-42d9-81fb-4f9310de89dc",
+      "color": "red",
+      "username": "admin"
+    },
+    {
+      "id": "b9678818-8eb5-4dc4-a147-7f30f2bc61c5",
+      "color": "blue",
+      "username": "asdf"
+    }
+  ],
+  "status": "finished",
+  "winner": "draw",
+  "moveHistory": [
+    {
+      "to": [
+        1,
+        6
+      ],
+      "from": [
+        0,
+        6
+      ],
+      "turn": 0,
+      "color": "red",
+      "username": "admin",
+      "timestamp": 1774589437170
+    },
+    {
+      "to": [
+        6,
+        6
+      ],
+      "from": [
+        7,
+        6
+      ],
+      "turn": 1,
+      "color": "blue",
+      "username": "asdf",
+      "timestamp": 1774589441521
+    },
+    {
+      "to": [
+        1,
+        2
+      ],
+      "from": [
+        0,
+        1
+      ],
+      "turn": 2,
+      "color": "red",
+      "username": "admin",
+      "timestamp": 1774589452052
+    },
+    {
+      "to": [
+        6,
+        5
+      ],
+      "from": [
+        7,
+        5
+      ],
+      "turn": 3,
+      "color": "blue",
+      "username": "asdf",
+      "timestamp": 1774589455404
+    },
+    {
+      "to": [
+        1,
+        5
+      ],
+      "from": [
+        1,
+        6
+      ],
+      "turn": 4,
+      "color": "red",
+      "username": "admin",
+      "timestamp": 1774591592617
+    },
+    {
+      "to": [
+        6,
+        1
+      ],
+      "from": [
+        7,
+        1
+      ],
+      "turn": 5,
+      "color": "blue",
+      "username": "asdf",
+      "timestamp": 1774591598346
+    },
+    {
+      "to": [
+        1,
+        4
+      ],
+      "from": [
+        0,
+        4
+      ],
+      "turn": 6,
+      "color": "red",
+      "username": "admin",
+      "timestamp": 1774591601186
+    },
+    {
+      "to": [
+        6,
+        4
+      ],
+      "from": [
+        7,
+        4
+      ],
+      "turn": 7,
+      "color": "blue",
+      "username": "asdf",
+      "timestamp": 1774591603316
+    },
+    {
+      "to": [
+        2,
+        4
+      ],
+      "from": [
+        1,
+        4
+      ],
+      "turn": 8,
+      "color": "red",
+      "username": "admin",
+      "timestamp": 1774591605412
+    },
+    {
+      "to": [
+        5,
+        4
+      ],
+      "from": [
+        6,
+        4
+      ],
+      "turn": 9,
+      "color": "blue",
+      "username": "asdf",
+      "timestamp": 1774591608423
+    },
+    {
+      "to": [
+        1,
+        4
+      ],
+      "from": [
+        0,
+        5
+      ],
+      "turn": 10,
+      "color": "red",
+      "username": "admin",
+      "timestamp": 1774591611038
+    },
+    {
+      "to": [
+        5,
+        5
+      ],
+      "from": [
+        6,
+        6
+      ],
+      "turn": 11,
+      "color": "blue",
+      "username": "asdf",
+      "timestamp": 1774591613156
+    },
+    {
+      "to": [
+        2,
+        5
+      ],
+      "from": [
+        1,
+        5
+      ],
+      "turn": 12,
+      "color": "red",
+      "username": "admin",
+      "timestamp": 1774591621149
+    },
+    {
+      "to": [
+        4,
+        4
+      ],
+      "from": [
+        5,
+        4
+      ],
+      "turn": 13,
+      "color": "blue",
+      "username": "asdf",
+      "timestamp": 1774591626101
+    },
+    {
+      "to": [
+        3,
+        4
+      ],
+      "from": [
+        2,
+        5
+      ],
+      "turn": 14,
+      "color": "red",
+      "username": "admin",
+      "timestamp": 1774591630201
+    },
+    {
+      "to": [
+        5,
+        4
+      ],
+      "from": [
+        6,
+        5
+      ],
+      "turn": 15,
+      "color": "blue",
+      "username": "asdf",
+      "timestamp": 1774591634119
+    },
+    {
+      "to": [
+        1,
+        3
+      ],
+      "from": [
+        0,
+        3
+      ],
+      "turn": 16,
+      "color": "red",
+      "username": "admin",
+      "timestamp": 1774591638801
+    },
+    {
+      "to": [
+        6,
+        3
+      ],
+      "from": [
+        7,
+        3
+      ],
+      "turn": 17,
+      "color": "blue",
+      "username": "asdf",
+      "timestamp": 1774591641649
+    },
+    {
+      "to": [
+        2,
+        3
+      ],
+      "from": [
+        1,
+        3
+      ],
+      "turn": 18,
+      "color": "red",
+      "username": "admin",
+      "timestamp": 1774591644234
+    },
+    {
+      "to": [
+        4,
+        5
+      ],
+      "from": [
+        5,
+        5
+      ],
+      "turn": 19,
+      "color": "blue",
+      "username": "asdf",
+      "timestamp": 1774591649698
+    },
+    {
+      "to": [
+        1,
+        3
+      ],
+      "from": [
+        0,
+        2
+      ],
+      "turn": 20,
+      "color": "red",
+      "username": "admin",
+      "timestamp": 1774591676653
+    },
+    {
+      "to": [
+        5,
+        2
+      ],
+      "from": [
+        6,
+        1
+      ],
+      "turn": 21,
+      "color": "blue",
+      "username": "asdf",
+      "timestamp": 1774591679854
+    },
+    {
+      "to": [
+        3,
+        3
+      ],
+      "from": [
+        2,
+        4
+      ],
+      "turn": 22,
+      "color": "red",
+      "username": "admin",
+      "timestamp": 1774591693158
+    },
+    {
+      "to": [
+        3,
+        4
+      ],
+      "from": [
+        4,
+        5
+      ],
+      "turn": 23,
+      "color": "blue",
+      "username": "asdf",
+      "timestamp": 1774591703733
+    },
+    {
+      "to": [
+        3,
+        4
+      ],
+      "from": [
+        2,
+        3
+      ],
+      "turn": 24,
+      "color": "red",
+      "username": "admin",
+      "timestamp": 1774591713227
+    },
+    {
+      "to": [
+        3,
+        4
+      ],
+      "from": [
+        2,
+        5
+      ],
+      "turn": 25,
+      "color": "blue",
+      "username": "asdf",
+      "timestamp": 1774591916887
+    },
+    {
+      "to": [
+        2,
+        2
+      ],
+      "from": [
+        1,
+        2
+      ],
+      "turn": 26,
+      "color": "red",
+      "username": "admin",
+      "timestamp": 1774594392833
+    },
+    {
+      "to": [
+        3,
+        3
+      ],
+      "from": [
+        4,
+        4
+      ],
+      "turn": 27,
+      "color": "blue",
+      "username": "asdf",
+      "timestamp": 1774594404194
+    },
+    {
+      "to": [
+        3,
+        3
+      ],
+      "from": [
+        2,
+        2
+      ],
+      "turn": 28,
+      "color": "red",
+      "username": "admin",
+      "timestamp": 1774594425045
+    },
+    {
+      "to": [
+        4,
+        4
+      ],
+      "from": [
+        3,
+        4
+      ],
+      "turn": 29,
+      "color": "blue",
+      "username": "asdf",
+      "timestamp": 1774594439458
+    },
+    {
+      "to": [
+        4,
+        3
+      ],
+      "from": [
+        3,
+        3
+      ],
+      "turn": 30,
+      "color": "red",
+      "username": "admin",
+      "timestamp": 1774628620815
+    },
+    {
+      "turn": 31,
+      "event": "draw",
+      "reason": "agreement",
+      "timestamp": 1774628664372
+    }
+  ],
+  "updatedAt": "2026-03-27T16:24:24.513Z"
+}
