@@ -1,6 +1,7 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
@@ -11,9 +12,52 @@ const knex = require('./config/knex');
 const emailService = require('./email-service');
 const HostageEngine = require('./public/js/engine.js');
 
+function normalizeOrigin(origin) {
+  if (!origin) return '';
+  return String(origin).trim().replace(/\/$/, '');
+}
+
+const configuredCorsOrigins = Array.from(new Set([
+  ...(process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || '').split(','),
+  process.env.FRONTEND_URL,
+].map(normalizeOrigin).filter(Boolean)));
+const allowAllCorsOrigins = configuredCorsOrigins.length === 0;
+
+function isAllowedCorsOrigin(origin) {
+  if (!origin) return true; // allow server-to-server calls without Origin
+  if (allowAllCorsOrigins) return true;
+  return configuredCorsOrigins.includes(normalizeOrigin(origin));
+}
+
+const corsOptions = {
+  origin(origin, callback) {
+    if (isAllowedCorsOrigin(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error(`Not allowed by CORS: ${origin}`));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 204,
+};
+
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+  cors: {
+    origin(origin, callback) {
+      if (isAllowedCorsOrigin(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error(`Not allowed by CORS: ${origin}`));
+    },
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
+});
 
 const HISTORY_DIR = path.join(__dirname, 'data', 'game_history');
 if (!fs.existsSync(HISTORY_DIR)) fs.mkdirSync(HISTORY_DIR, { recursive: true });
@@ -262,6 +306,7 @@ function safeAccountResponse(row, statsRow = null) {
 }
 
 // ─── middleware ───────────────────────────────────────────
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Prevent caching of index.html so the browser always loads the latest JS/CSS
