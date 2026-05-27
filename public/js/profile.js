@@ -1,22 +1,12 @@
-/* ─── Profile / Stats Page ───────────────────────────── */
+/* ─── Profile Page ──────────────────────────────────────── */
 
-window.ProfilePage = (() => {
-  let viewedUser = null;
-  let viewedGames = null;
+window.StatsPage = (() => {
+  let userStats = null;
+  let userGames = null;
   let leaderboard = null;
 
   function getUser() {
     try { return JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user')); } catch { return null; }
-  }
-
-  function getDefaultStats() {
-    return {
-      elo: 1200,
-      gamesPlayed: 0,
-      wins: 0,
-      losses: 0,
-      draws: 0,
-    };
   }
 
   async function fetchStats(userId) {
@@ -29,6 +19,16 @@ window.ProfilePage = (() => {
       console.error('Failed to fetch stats:', err);
       return null;
     }
+  }
+
+  function getDefaultStats() {
+    return {
+      elo: 1200,
+      gamesPlayed: 0,
+      wins: 0,
+      losses: 0,
+      draws: 0,
+    };
   }
 
   async function fetchUserGames(userId) {
@@ -53,60 +53,42 @@ window.ProfilePage = (() => {
     }
   }
 
-  async function submitReport(targetUserId, reporterId, reason, details) {
-    const res = await fetch(`/api/users/${targetUserId}/report`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reporterId, reason, details }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'Failed to submit report.');
-    return data;
-  }
-
-  async function render(targetUserId) {
-    const me = getUser();
-    if (!me) {
+  async function render() {
+    const user = getUser();
+    if (!user) {
       window.App.navigate('/');
       return;
     }
-
-    const userId = targetUserId || me.id;
-    const isSelf = userId === me.id;
 
     const app = document.getElementById('app');
     app.innerHTML = `
       <div class="stats-page">
         <div class="game-header">
           <button id="back-to-lobby" class="btn-secondary">← Lobby</button>
-          <h2>${isSelf ? 'My Profile' : 'Player Profile'}</h2>
+          <h2>Statistics</h2>
           <div></div>
         </div>
 
         <div class="stats-container">
           <div class="stats-section card">
-            <h3>Profile Details</h3>
-            <div id="profile-details-content"><p>Loading...</p></div>
-          </div>
-
-          <div class="stats-section card">
-            <h3>${isSelf ? 'Your Statistics' : 'Player Statistics'}</h3>
-            <div id="user-stats-content"><p>Loading...</p></div>
-          </div>
-
-          <div class="stats-section card" id="report-section" style="display:${isSelf ? 'none' : 'block'}">
-            <h3>Report This User</h3>
-            <div id="report-content"></div>
+            <h3>Your Statistics</h3>
+            <div id="user-stats-content">
+              <p>Loading...</p>
+            </div>
           </div>
 
           <div class="stats-section card">
             <h3>Recent Games</h3>
-            <div id="recent-games-content"><p>Loading...</p></div>
+            <div id="recent-games-content">
+              <p>Loading...</p>
+            </div>
           </div>
 
           <div class="stats-section card">
             <h3>Leaderboard (Top 20)</h3>
-            <div id="leaderboard-content"><p>Loading...</p></div>
+            <div id="leaderboard-content">
+              <p>Loading...</p>
+            </div>
           </div>
         </div>
       </div>
@@ -116,68 +98,26 @@ window.ProfilePage = (() => {
       window.App.navigate('/lobby');
     });
 
-    viewedUser = await fetchStats(userId);
-    viewedGames = await fetchUserGames(userId);
+    // Load data
+    userStats = await fetchStats(user.id);
+    userGames = await fetchUserGames(user.id);
     leaderboard = await fetchLeaderboard();
 
-    renderProfileDetails();
     renderUserStats();
     renderRecentGames();
     renderLeaderboard();
-    renderReportSection(me, userId, isSelf);
-  }
-
-  function renderProfileDetails() {
-    const content = document.getElementById('profile-details-content');
-    if (!content) return;
-    if (!viewedUser) {
-      content.innerHTML = '<p class="error-msg">Failed to load profile details.</p>';
-      return;
-    }
-
-    const stats = viewedUser.stats || {};
-    const avg = stats.sportsmanshipAverage != null ? stats.sportsmanshipAverage : 'N/A';
-    const country = viewedUser.country || 'N/A';
-    const age = viewedUser.age || 'N/A';
-    const gender = viewedUser.gender || 'N/A';
-
-    content.innerHTML = `
-      <div class="stats-grid">
-        <div class="stat-item">
-          <div class="stat-label">Username</div>
-          <div class="stat-value">${viewedUser.username || 'Unknown'}</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">Country</div>
-          <div class="stat-value">${country}</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">Age</div>
-          <div class="stat-value">${age}</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">Gender</div>
-          <div class="stat-value">${gender}</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-label">Sportsmanship</div>
-          <div class="stat-value">${avg}</div>
-        </div>
-      </div>
-    `;
   }
 
   function renderUserStats() {
     const content = document.getElementById('user-stats-content');
-    if (!content) return;
-    if (!viewedUser) {
+    if (!userStats) {
       content.innerHTML = '<p class="error-msg">Failed to load stats.</p>';
       return;
     }
 
-    const stats = { ...getDefaultStats(), ...(viewedUser?.stats || {}) };
-    const winRate = stats.gamesPlayed > 0
-      ? ((stats.wins / stats.gamesPlayed) * 100).toFixed(1)
+    const stats = { ...getDefaultStats(), ...(userStats?.stats || {}) };
+    const winRate = stats.gamesPlayed > 0 
+      ? ((stats.wins / stats.gamesPlayed) * 100).toFixed(1) 
       : '0.0';
 
     content.innerHTML = `
@@ -210,71 +150,20 @@ window.ProfilePage = (() => {
     `;
   }
 
-  function renderReportSection(me, targetUserId, isSelf) {
-    if (isSelf) return;
-    const content = document.getElementById('report-content');
-    if (!content) return;
-
-    content.innerHTML = `
-      <form id="report-user-form" class="auth-form">
-        <select id="report-reason">
-          <option value="">Select reason</option>
-          <option value="abusive-chat">Abusive chat</option>
-          <option value="harassment">Harassment</option>
-          <option value="cheating">Cheating / exploitation</option>
-          <option value="abandonment">Habitual abandonment</option>
-          <option value="other">Other</option>
-        </select>
-        <textarea id="report-details" rows="4" placeholder="Optional details for admin"></textarea>
-        <p class="error-msg" id="report-error"></p>
-        <button type="submit" id="report-submit-btn">Submit Report</button>
-      </form>
-    `;
-
-    const form = document.getElementById('report-user-form');
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const reason = (document.getElementById('report-reason').value || '').trim();
-      const details = (document.getElementById('report-details').value || '').trim();
-      const err = document.getElementById('report-error');
-      err.textContent = '';
-
-      if (!reason) {
-        err.textContent = 'Please select a reason.';
-        return;
-      }
-
-      const btn = document.getElementById('report-submit-btn');
-      btn.disabled = true;
-      btn.textContent = 'Submitting...';
-      try {
-        await submitReport(targetUserId, me.id, reason, details);
-        Toast.success('Report submitted to admin.', 2500);
-        form.reset();
-      } catch (error) {
-        err.textContent = error.message || 'Could not submit report.';
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Submit Report';
-      }
-    });
-  }
-
   function renderRecentGames() {
     const content = document.getElementById('recent-games-content');
-    if (!content) return;
-    if (!viewedGames || viewedGames.length === 0) {
+    if (!userGames || userGames.length === 0) {
       content.innerHTML = '<p class="empty-message">No games played yet.</p>';
       return;
     }
 
-    const viewedUserId = viewedUser?.id;
-    const gamesHtml = viewedGames.slice(0, 10).map((game) => {
+    const user = getUser();
+    const gamesHtml = userGames.slice(0, 10).map(game => {
       const players = Array.isArray(game.players) ? game.players : [];
-      const userPlayer = players.find((p) => p.id === viewedUserId);
+      const userPlayer = players.find(p => p.username === user.username);
       const isWinner = game.winner === userPlayer?.color;
       const isDraw = game.winner === 'draw';
-
+      
       let resultClass = '';
       let resultText = '';
       if (isDraw) {
@@ -288,7 +177,9 @@ window.ProfilePage = (() => {
         resultText = 'Loss';
       }
 
-      const date = game.finishedAt ? new Date(game.finishedAt).toLocaleDateString() : 'N/A';
+      const date = game.finishedAt 
+        ? new Date(game.finishedAt).toLocaleDateString() 
+        : 'N/A';
 
       return `
         <div class="game-item ${resultClass}">
@@ -296,7 +187,7 @@ window.ProfilePage = (() => {
           <div class="game-info">
             <div class="game-name">${game.name || 'Game'}</div>
             <div class="game-details">
-              ${players.map((p) => `<span class="player-badge ${p.color}">${p.username}</span>`).join(' ')}
+              ${players.map(p => `<span class="player-badge ${p.color}">${p.username}</span>`).join(' ')}
             </div>
             <div class="game-meta">${game.turnCount} turns • ${date}</div>
           </div>
@@ -310,14 +201,15 @@ window.ProfilePage = (() => {
 
     content.innerHTML = `<div class="games-list">${gamesHtml}</div>`;
 
-    content.querySelectorAll('.review-btn').forEach((btn) => {
+    // Add event listeners
+    content.querySelectorAll('.review-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const gameId = btn.dataset.gameId;
         window.App.navigate(`/review/${gameId}`);
       });
     });
 
-    content.querySelectorAll('.download-btn').forEach((btn) => {
+    content.querySelectorAll('.download-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const gameId = btn.dataset.gameId;
         await downloadGameHistory(gameId);
@@ -327,19 +219,18 @@ window.ProfilePage = (() => {
 
   function renderLeaderboard() {
     const content = document.getElementById('leaderboard-content');
-    if (!content) return;
     if (!leaderboard || leaderboard.length === 0) {
       content.innerHTML = '<p class="empty-message">No players on leaderboard yet.</p>';
       return;
     }
 
-    const me = getUser();
+    const user = getUser();
     const top20 = leaderboard.slice(0, 20);
 
     const leaderboardHtml = top20.map((player, index) => {
-      const isCurrentUser = player.username === me.username;
+      const isCurrentUser = player.username === user.username;
       const rankClass = index < 3 ? `rank-${index + 1}` : '';
-
+      
       return `
         <div class="leaderboard-item ${rankClass} ${isCurrentUser ? 'current-user' : ''}">
           <div class="rank">${index + 1}</div>
@@ -365,7 +256,7 @@ window.ProfilePage = (() => {
     try {
       const res = await fetch(`/api/games/${gameId}/history/download`);
       const data = await res.json();
-
+      
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -373,7 +264,7 @@ window.ProfilePage = (() => {
       a.download = `game-${gameId}.json`;
       a.click();
       URL.revokeObjectURL(url);
-
+      
       Toast.success('Game history downloaded!', 2000);
     } catch (err) {
       console.error('Download failed:', err);
@@ -382,12 +273,10 @@ window.ProfilePage = (() => {
   }
 
   function cleanup() {
-    viewedUser = null;
-    viewedGames = null;
+    userStats = null;
+    userGames = null;
     leaderboard = null;
   }
 
   return { render, cleanup };
 })();
-
-window.StatsPage = window.ProfilePage;

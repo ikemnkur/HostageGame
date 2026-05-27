@@ -34,6 +34,10 @@ window.SocketClient = (() => {
     getSocket().emit('game:requestDraw', { gameId, userId });
   }
 
+  function onAbandonWarning(fn) {
+    getSocket().on('game:abandonWarning', fn);
+  }
+
   function onLobbyUpdate(fn) {
     getSocket().on('lobby:update', fn);
   }
@@ -83,10 +87,11 @@ window.SocketClient = (() => {
       socket.off('game:moveError');
       socket.off('game:timerTick');
       socket.off('game:drawRequested');
+      socket.off('game:abandonWarning');
       socket.off('spectate:chat:msg');
       socket.off('spectate:chat:history');
     }
   }
 
-  return { connect, getSocket, joinGame, sendMove, requestResign, requestDraw, onLobbyUpdate, onGameUpdate, onMoveError, onTimerTick, onDrawRequested, joinSpectate, sendChatMessage, onChatMessage, onChatHistory, off, offAll };
+  return { connect, getSocket, joinGame, sendMove, requestResign, requestDraw, onLobbyUpdate, onGameUpdate, onMoveError, onTimerTick, onDrawRequested, onAbandonWarning, joinSpectate, sendChatMessage, onChatMessage, onChatHistory, off, offAll };
 })();

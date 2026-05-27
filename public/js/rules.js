@@ -33,7 +33,7 @@ window.RulesPage = (() => {
                 <div class="diag-piece queen white" style="grid-column: 8; grid-row: 8;">Q</div>
                 <div class="diag-piece king black" style="grid-column: 7; grid-row: 7;">K</div>
               </div>
-              <p class="diagram-caption">The queen begins separated. The rescue is complete when the king and queen reunite at home.</p>
+              <p class="diagram-caption">The queen begins separated. The rescue is complete when the king and queen reunite at the home square/castle square.</p>
             </div>
           </section>
 
@@ -42,8 +42,8 @@ window.RulesPage = (() => {
             <div class="rule-callout">
               <p><strong>Strategic objective:</strong> recover your queen and score the stronger round position by the time the round resolves.</p>
               <ul>
-                <li><strong>White home/castle square:</strong> A1</li>
-                <li><strong>Black home/castle square:</strong> H8</li>
+                <li><strong>White home/castle square:</strong> A8</li>
+                <li><strong>Black home/castle square:</strong> H1</li>
                 <li><strong>Round resolution:</strong> after every Black move, the game evaluates score and outcome.</li>
               </ul>
             </div>
@@ -52,6 +52,7 @@ window.RulesPage = (() => {
           <section class="rules-section">
             <h2>🎲 Starting Position</h2>
             <p>The board uses the CSV opening layout below. The king starts in front, while the queen starts stranded in the opposite corner.</p>
+            <img src="/assets/images/starting-position.png" alt="Starting position diagram" class="rules-image" />
             <div class="csv-block">
               <code>BQueen,WKnight,WBishop,Wpawn,Wpawn,,,,<br>
 WBishop,WKing,Wpawn,Wpawn,,,,<br>
@@ -73,42 +74,25 @@ Wpawn,,,,,,Bpawn,Bpawn<br>
                 <div class="piece-example example-row">
                   <span class="example-start">K</span><span class="arrow">→</span><span class="example-step">1</span><span class="arrow">→</span><span class="example-step">2</span>
                 </div>
-                <p>No castling. The king is the escort piece for the rescue route and the key condition for keeping your queen protected.</p>
+                <p>No castling here, because well there arent rooks to "castle" with. The king is the escort piece for the queen rescue, and is the key condition for "castling" with the queen on the castle/home square. it the most powerful piece for keeping your queen protected.</p>
               </div>
 
               <div class="move-card move-card-compact">
                 <h3>Queen</h3>
                 <div class="piece-line"><span class="piece-chip white queen-chip">Q</span><span>Moves 1 square like a king.</span></div>
-                <div class="piece-example example-grid">
-                  <span></span><span class="diag-dot"></span><span></span>
-                  <span class="diag-dot"></span><span class="example-center">Q</span><span class="diag-dot"></span>
-                  <span></span><span class="diag-dot"></span><span></span>
-                </div>
-                <p>Queen can only capture on her own home side, and can only be captured on her own home side. On the enemy side and on the neutral diagonal (A1, B2, C3, D4, E5, F6, G7, H8), she is unarmed and cannot be captured.</p>
+              
+                <p>Queen can only capture on her own home side (it arms-up on its own side), and can only be captured on her own home side ( when it is "armed"). On the enemy side and on the neutral diagonal (A1, B2, C3, D4, E5, F6, G7, H8), she is unarmed and cannot be captured until she crosses over to her home side.</p>
               </div>
 
               <div class="move-card move-card-compact">
                 <h3>Pawn</h3>
                 <div class="piece-line"><span class="piece-chip white">P</span><span>Moves like a rook, but only 1 square.</span></div>
-                <div class="piece-example pawn-example">
-                  <div class="pawn-orth">
-                    <span class="move-dot center"></span>
-                    <span class="move-dot up"></span>
-                    <span class="move-dot down"></span>
-                    <span class="move-dot left"></span>
-                    <span class="move-dot right"></span>
-                  </div>
-                  <div class="pawn-capture">
-                    <span class="move-dot diag up-left"></span>
-                    <span class="move-dot diag up-right"></span>
-                    <span class="example-center small">P</span>
-                  </div>
-                </div>
-                <p>Pawn movement is orthogonal by 1 square. Pawn captures are diagonal by 1 square.</p>
+               
+                <p>Pawn movement is orthogonal by 1 square. Pawn captures are diagonal by 1 square. Pairing pawns can form forts. If a pawn breaches the enemy castle it can promote into a knight, if a fort is formed in the enemy castle square it promotes to a bishop.</p>
               </div>
 
               <div class="move-card move-card-compact">
-                <h3>Rook / Fort</h3>
+                <h3>Rook</h3>
                 <div class="piece-line"><span class="piece-chip black">R</span><span>Slides orthogonally and can push one blocker.</span></div>
                 <div class="piece-example example-row push-example">
                   <span class="example-start">R</span><span class="arrow">→</span><span class="blocker">X</span><span class="arrow">→</span><span class="push-target">□</span>
@@ -116,7 +100,20 @@ Wpawn,,,,,,Bpawn,Bpawn<br>
                 <div class="piece-example example-row push-example">
                   <span class="push-target">□</span><span class="arrow">→</span><span class="blocker">R</span><span class="arrow">→</span><span class="example-start">X</span>
                 </div>
-                <p>Rooks cannot capture and cannot be captured. A blocked move can push one piece forward if space remains.</p>
+                <p>Rooks cannot capture and cannot be captured. A blocked move can push one piece forward if space remains in the direction of travel.</p>
+                <p> Rooks can demote into forts, select the demote button.</p>
+                 <p> If the rook breaches the enemy castle it promotes (forced) into a queen, if a fort is formed in the enemy castle square it promotes to a bishop.</p>
+               
+              </div>
+
+              <div class="move-card move-card-compact">
+                <h3>Fort</h3>
+                <div class="piece-line"><span class="piece-chip black">F</span><span>Static Piece (no movement)</span></div>
+                
+                <p> Two adjacent pawns of the same color can move to the same square to form a fort, which is static and cannot move nor can it be captured like rooks. Form can revert by selecting a free square to demote the fort back into individual pawns.</p>
+                <p>Forts can be used to create strategic barriers and control key squares, but they can also be a liability if they block your own rescue routes or piece coordination.</p>
+                <p>If a king is adjacent to a fort, the fort can elect to promote into a rook on the king's turn, select the promote button. Doing so gains the ability to move and push but loses the static defense. This can be a powerful tactical option for breaking through enemy lines or creating dynamic threats, but it also exposes the fort to capture and removes its ability to serve as a protective barrier for your king.</p>
+               
               </div>
 
               <div class="move-card move-card-compact">
@@ -153,11 +150,11 @@ Wpawn,,,,,,Bpawn,Bpawn<br>
             <div class="home-grid">
               <div class="home-box white-home">
                 <strong>White home</strong>
-                <span>A1</span>
+                <span>A8</span>
               </div>
               <div class="home-box black-home">
                 <strong>Black home</strong>
-                <span>H8</span>
+                <span>H1</span>
               </div>
             </div>
           </section>
@@ -168,19 +165,39 @@ Wpawn,,,,,,Bpawn,Bpawn<br>
               <li><strong>Win:</strong> after round scoring, one side has higher points.</li>
               <li><strong>Loss:</strong> you finish the round with fewer points.</li>
               <li><strong>Draw:</strong> scores are equal, or both queens return home in the same round, or all royalty is eliminated.</li>
-              <li><strong>Null:</strong> both queens are eliminated behind enemy lines before either has crossed back to its own side.</li>
+              <li><strong>Null:</strong> both queens are eliminated behind enemy lines before either has crossed back to its own side. Or Abandonment/Abort</li>
             </ol>
           </section>
 
           <section class="rules-section">
             <h2>📊 Simple Score System</h2>
+            <p>At round resolution, each player scores points based on the rank/number of their pieces. The player with the higher score wins the round.</p>
+
+            <PieceValueTable />
+              <p>Points are awarded for surviving pieces, with the queen and king being the most valuable. The neutral pawn in the center is worth 1 point to each side if it survives, but cannot be captured or moved.</p>  
+              Pawns: 1.5 point each<br>
+              Knights: 3 points each<br>
+              Bishops: 4 points each<br>
+              Forts (paired pawns): 4 points each<br>
+              Rooks: 6 points each<br>
+              Queen: 10 points<br>
+              King: 15 points<br>
+          </section>
+
+          <section class="rules-section">
+            <h2>⚖️ Bonus / Penalty Scoring</h2>
+
+            Bonus points and penalties are applied based on key strategic conditions related to the rescue and castling/home-return:
             <ul>
+             
               <li><strong>+10</strong>: all your surviving royals are on your home square.</li>
               <li><strong>+5</strong>: your king reaches the enemy home square.</li>
               <li><strong>+3</strong>: your king is gone, but your queen has returned home.</li>
               <li><strong>-10</strong>: your king and queen are both eliminated.</li>
               <li><strong>-5</strong>: enemy king reaches your home square.</li>
-              <li><strong>Special swing:</strong> when a side's king is dead and its queen is safely home, the opposing side can take an additional 3-point penalty depending on the board state.</li>
+              <li><strong>-3</strong>: enemy king is dead, but enemy queen is safely castled/home.</li>
+              <li><strong>0</strong>: all other scenarios, including draws and nulls.</li>
+
             </ul>
           </section>
 

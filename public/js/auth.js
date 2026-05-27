@@ -30,6 +30,17 @@ window.AuthPage = (() => {
             <input type="text" id="reg-firstname" name="firstName" placeholder="First name (optional)" autocomplete="given-name" />
             <input type="text" id="reg-lastname"  name="lastName"  placeholder="Last name (optional)"  autocomplete="family-name" />
           </div>
+          <div class="name-row">
+            <input type="number" id="reg-age" min="13" max="120" name="age" placeholder="Age" autocomplete="off" />
+            <select id="reg-gender" name="gender" autocomplete="sex">
+              <option value="">Gender</option>
+              <option value="female">Female</option>
+              <option value="male">Male</option>
+              <option value="non-binary">Non-binary</option>
+              <option value="prefer-not">Prefer not to say</option>
+            </select>
+          </div>
+          <input type="text" id="reg-country" name="country" placeholder="Country" autocomplete="country-name" />
           <input type="text"     id="reg-username" name="username" placeholder="Username (2–50 chars)" autocomplete="username" />
           <input type="email"    id="reg-email"    name="email"    placeholder="Email address"           autocomplete="email" />
           <input type="password" id="reg-password" name="password" placeholder="Password (min 6 chars)" autocomplete="new-password" />
@@ -97,6 +108,25 @@ window.AuthPage = (() => {
   // ─── internal state ───────────────────────────────────────
   const _state = { pendingEmail: null };
 
+  async function _collectBasicFingerprint() {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown';
+    const parts = {
+      ua: navigator.userAgent || '',
+      lang: navigator.language || '',
+      langs: Array.isArray(navigator.languages) ? navigator.languages.join(',') : '',
+      platform: navigator.platform || '',
+      vendor: navigator.vendor || '',
+      tz,
+      screen: `${screen.width || 0}x${screen.height || 0}x${screen.colorDepth || 0}`,
+      cores: navigator.hardwareConcurrency || 0,
+      mem: navigator.deviceMemory || 0,
+      touch: navigator.maxTouchPoints || 0,
+      dnt: navigator.doNotTrack || '',
+      cookie: navigator.cookieEnabled ? '1' : '0',
+    };
+    return JSON.stringify(parts);
+  }
+
   // ─── tab switching ────────────────────────────────────────
   function _showTab(tab) {
     document.getElementById('login-form').style.display   = tab === 'login'    ? '' : 'none';
@@ -134,10 +164,11 @@ window.AuthPage = (() => {
     btn.disabled = true; btn.textContent = 'Signing in…';
 
     try {
+      const fingerprint = await _collectBasicFingerprint();
       const res  = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ login, password }),
+        body: JSON.stringify({ login, password, fingerprint }),
       });
       const data = await res.json();
 
@@ -168,9 +199,21 @@ window.AuthPage = (() => {
     const confirm   = document.getElementById('reg-confirm').value;
     const firstName = document.getElementById('reg-firstname').value.trim();
     const lastName  = document.getElementById('reg-lastname').value.trim();
+    const age       = document.getElementById('reg-age').value.trim();
+    const gender    = document.getElementById('reg-gender').value;
+    const country   = document.getElementById('reg-country').value.trim();
 
     if (!username || !email || !password) {
       errorEl.textContent = 'Username, email and password are required.';
+      return;
+    }
+    if (!age || !gender || !country) {
+      errorEl.textContent = 'Age, gender, and country are required.';
+      return;
+    }
+    const ageNum = Number.parseInt(age, 10);
+    if (!Number.isInteger(ageNum) || ageNum < 13 || ageNum > 120) {
+      errorEl.textContent = 'Please enter a valid age between 13 and 120.';
       return;
     }
     if (password !== confirm) {
@@ -186,10 +229,11 @@ window.AuthPage = (() => {
     btn.disabled = true; btn.textContent = 'Creating account…';
 
     try {
+      const fingerprint = await _collectBasicFingerprint();
       const res  = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, email, password, firstName, lastName }),
+        body: JSON.stringify({ username, email, password, firstName, lastName, age: String(ageNum), gender, country, fingerprint }),
       });
       const data = await res.json();
 

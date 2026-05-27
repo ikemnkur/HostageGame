@@ -16,6 +16,10 @@ window.GamePage = (() => {
   let timerTickHandler = null;
   let moveErrorHandler = null;
   let drawRequestedHandler = null;
+  let abandonWarningHandler = null;
+  let playerStatsById = {};
+  let playerStatsLoading = new Set();
+  let preGameStatsModalTimer = null;
 
   function getUser() {
     try { return JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user')); } catch { return null; }
@@ -49,6 +53,7 @@ window.GamePage = (() => {
             <div class="game-actions" id="game-actions">
               <button id="promote-btn" class="btn-secondary" disabled>Promote</button>
               <button id="demote-btn" class="btn-secondary" disabled>Demote</button>
+              <button id="abort-btn" class="btn-secondary">Abort</button>
               <button id="resign-btn" class="btn-danger">Resign</button>
               <button id="draw-btn" class="btn-secondary">Offer Draw</button>
             </div>
@@ -88,6 +93,14 @@ window.GamePage = (() => {
           <button id="close-share-modal" class="btn-secondary" style="margin-top:12px; width:100%">Close</button>
         </div>
       </div>
+
+      <div class="share-modal" id="pregame-stats-modal" style="display:none">
+        <div class="share-modal-box">
+          <h3>Match Starting</h3>
+          <p style="color:var(--text-muted); margin-bottom:8px;">Player stats preview before the clock starts.</p>
+          <div id="pregame-stats-content"></div>
+        </div>
+      </div>
     `;
 
     document.getElementById('back-to-lobby').addEventListener('click', () => window.App.navigate('/lobby'));
@@ -118,9 +131,11 @@ window.GamePage = (() => {
       // Detect game start with timer buffer
       if (game.status === 'playing' && gameState && gameState.status === 'waiting') {
         const maxPlayers = game.maxPlayers || 2;
-        Toast.success(`All ${maxPlayers} players joined! Game starting in 3 seconds...`, 3500);
-        // Play game start sound after 3 seconds
-        setTimeout(() => SoundManager.play('gameStart'), 3000);
+        const countdownMs = Math.max(0, (game.timerStartsAt || 0) - Date.now()) || 4500;
+        const countdownSec = Math.max(1, Math.ceil(countdownMs / 1000));
+        Toast.success(`All ${maxPlayers} players joined! Game starting in ${countdownSec} seconds...`, Math.max(3500, countdownMs));
+        ensurePlayerStatsLoaded(game.players).finally(() => showPreGameStatsModal(game));
+        setTimeout(() => SoundManager.play('gameStart'), countdownMs);
       }
 
       // Detect new moves and play sound
@@ -191,6 +206,7 @@ window.GamePage = (() => {
 
       // Update game state
       gameState = game;
+      ensurePlayerStatsLoaded(game.players);
       // Sync clocks from server snapshot
       if (game.clocks) {
         localClocks = { ...game.clocks };
@@ -232,6 +248,15 @@ window.GamePage = (() => {
     };
     SocketClient.onDrawRequested(drawRequestedHandler);
 
+    abandonWarningHandler = ({ secondsElapsed, message }) => {
+      if (secondsElapsed >= 80) {
+        Toast.error(message || '10 sec left to move or lose.', 3000);
+      } else {
+        Toast.warning(message || 'Move soon or you will lose by inactivity.', 3000);
+      }
+    };
+    SocketClient.onAbandonWarning(abandonWarningHandler);
+
     // Resign button
     document.getElementById('resign-btn').addEventListener('click', () => {
       if (!gameState || gameState.status !== 'playing') return;
@@ -245,6 +270,29 @@ window.GamePage = (() => {
       if (!gameState || gameState.status !== 'playing') return;
       SocketClient.requestDraw(gameId, user.id);
       Toast.info('Draw request sent. Waiting for other players to agree...', 3000);
+    });
+
+    document.getElementById('abort-btn').addEventListener('click', async () => {
+      if (!gameState || gameState.status !== 'playing') return;
+      const regularMoves = (gameState.moveHistory || []).filter((m) => Array.isArray(m.from) && Array.isArray(m.to)).length;
+      const earlyAbort = regularMoves < 7;
+      const msg = earlyAbort
+        ? 'Abort this game? It will be marked as a null game and you will lose 3 ELO.'
+        : 'Abort this game? Opponent wins by default, you lose 20 ELO and they gain 3 ELO.';
+      if (!confirm(msg)) return;
+
+      try {
+        const res = await fetch(`/api/games/${gameId}/abort`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user.id }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || 'Abort failed');
+        Toast.success(earlyAbort ? 'Game aborted as null.' : 'Game aborted. Opponent awarded win by default.', 3000);
+      } catch (err) {
+        Toast.error(err.message || 'Abort failed.', 3000);
+      }
     });
 
     document.getElementById('promote-btn').addEventListener('click', () => {
@@ -382,6 +430,7 @@ window.GamePage = (() => {
       const data = await res.json();
       if (data.game) {
         gameState = data.game;
+        await ensurePlayerStatsLoaded(data.game.players);
         previousPlayerCount = data.game.players.length;  // Initialize count
         previousMoveCount = (data.game.moveHistory || []).length;  // Initialize move count
         previousGameStatus = data.game.status;  // Initialize status
@@ -389,6 +438,136 @@ window.GamePage = (() => {
         updateUI(user);
       }
     } catch { }
+  }
+
+  async function fetchPlayerStats(userId) {
+    const res = await fetch(`/api/users/${userId}/stats`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.stats || null;
+  }
+
+  async function ensurePlayerStatsLoaded(players) {
+    const tasks = (players || []).map(async (p) => {
+      if (!p?.id || playerStatsById[p.id] || playerStatsLoading.has(p.id)) return;
+      playerStatsLoading.add(p.id);
+      try {
+        const stats = await fetchPlayerStats(p.id);
+        if (stats) playerStatsById[p.id] = stats;
+      } catch {
+        // Ignore stats fetch failures so gameplay is never blocked.
+      } finally {
+        playerStatsLoading.delete(p.id);
+      }
+    });
+
+    await Promise.all(tasks);
+  }
+
+  function getPlayerElo(player) {
+    if (!player?.id) return 1200;
+    const stats = playerStatsById[player.id];
+    return stats?.elo != null ? stats.elo : 1200;
+  }
+
+  function formatPlayerWithElo(player) {
+    if (!player) return 'Unknown';
+    return `${player.username} (${getPlayerElo(player)})`;
+  }
+
+  function showPreGameStatsModal(game) {
+    const modal = document.getElementById('pregame-stats-modal');
+    const content = document.getElementById('pregame-stats-content');
+    if (!modal || !content) return;
+
+    const rows = (game.players || []).map((p) => {
+      const stats = playerStatsById[p.id] || {};
+      const wins = stats.wins || 0;
+      const losses = stats.losses || 0;
+      const draws = stats.draws || 0;
+      const elo = stats.elo != null ? stats.elo : 1200;
+      return `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.1)">
+          <div>
+            <div style="font-weight:600">${p.username} (${String(p.color || '').toUpperCase()})</div>
+            <div style="font-size:.85rem;color:var(--text-muted)">${wins}W/${losses}L/${draws}D</div>
+          </div>
+          <div style="font-weight:700">ELO ${elo}</div>
+        </div>
+      `;
+    }).join('');
+
+    content.innerHTML = rows;
+    modal.style.display = 'flex';
+
+    if (preGameStatsModalTimer) clearTimeout(preGameStatsModalTimer);
+    const closeAfter = Math.max(2000, ((game.timerStartsAt || 0) - Date.now()) || 4500);
+    preGameStatsModalTimer = setTimeout(() => {
+      modal.style.display = 'none';
+    }, closeAfter);
+  }
+
+  async function submitSportsmanshipRating(gameId, fromUserId, toUserId, rating) {
+    const res = await fetch(`/api/games/${gameId}/sportsmanship`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fromUserId, toUserId, rating }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'Could not submit rating.');
+    return data;
+  }
+
+  function renderSportsmanshipControls(user) {
+    if (!gameState || gameState.status !== 'finished') return '';
+    const me = gameState.players.find((p) => p.id === user.id);
+    const opponent = gameState.players.find((p) => p.id !== user.id);
+    if (!me || !opponent) return '';
+
+    const alreadyRated = (gameState.moveHistory || []).some((m) =>
+      m.event === 'sportsmanshipRating' && m.fromUserId === user.id && m.toUserId === opponent.id
+    );
+
+    if (alreadyRated) {
+      return `<div style="margin-top:10px;opacity:.92">You already rated ${opponent.username}'s sportsmanship for this game.</div>`;
+    }
+
+    const buttons = [0, 1, 2, 3, 4, 5]
+      .map((n) => `<button class="btn-sm sport-rate-btn" data-rating="${n}">${n}★</button>`)
+      .join('');
+    return `
+      <div id="sportsmanship-wrap" style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,.12)">
+        <div style="font-weight:600; margin-bottom:6px;">Rate ${opponent.username}'s sportsmanship</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">${buttons}</div>
+      </div>
+    `;
+  }
+
+  function bindSportsmanshipControls(user) {
+    const wrap = document.getElementById('sportsmanship-wrap');
+    if (!wrap || !gameState) return;
+    const opponent = gameState.players.find((p) => p.id !== user.id);
+    if (!opponent) return;
+
+    wrap.querySelectorAll('.sport-rate-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const rating = Number.parseInt(btn.dataset.rating, 10);
+        try {
+          await submitSportsmanshipRating(gameState.id, user.id, opponent.id, rating);
+          gameState.moveHistory = [...(gameState.moveHistory || []), {
+            event: 'sportsmanshipRating',
+            fromUserId: user.id,
+            toUserId: opponent.id,
+            rating,
+            timestamp: Date.now(),
+          }];
+          Toast.success('Sportsmanship rating submitted.', 2500);
+          updateUI(user, true);
+        } catch (err) {
+          Toast.error(err.message || 'Could not submit rating.', 3000);
+        }
+      });
+    });
   }
 
   function updateUI(user, skipBoard) {
@@ -432,11 +611,11 @@ window.GamePage = (() => {
       const currentPlayer = gameState.players[gameState.currentTurn];
       const isMyTurn = currentPlayer && currentPlayer.id === user.id;
       if (eliminated.includes(currentPlayer?.color)) {
-        turnEl.textContent = `${currentPlayer.username} eliminated`;
+        turnEl.textContent = `${formatPlayerWithElo(currentPlayer)} eliminated`;
         turnEl.style.background = '#555';
         turnEl.style.color = '#fff';
       } else {
-        turnEl.textContent = isMyTurn ? 'Your Turn' : `${currentPlayer.username}'s Turn`;
+        turnEl.textContent = isMyTurn ? 'Your Turn' : `${formatPlayerWithElo(currentPlayer)}'s Turn`;
         turnEl.style.background = getColorCSS(currentPlayer.color);
         turnEl.style.color = currentPlayer.color === 'white' ? '#111' : '#fff';
       }
@@ -463,7 +642,7 @@ window.GamePage = (() => {
       return `
         <div class="player-label ${active} ${elim}">
           <span class="dot" style="background:${getColorCSS(p.color)}"></span>
-          ${p.username} ${elim ? '(out)' : ''}
+          ${formatPlayerWithElo(p)} ${elim ? '(out)' : ''}
         </div>
       `;
     }).join('');
@@ -492,7 +671,7 @@ window.GamePage = (() => {
         text.style.color = 'var(--text)';
       } else {
         const winnerPlayer = gameState.players.find(p => p.color === gameState.winner);
-        text.textContent = `${winnerPlayer ? winnerPlayer.username : gameState.winner} Wins!`;
+        text.textContent = `${winnerPlayer ? formatPlayerWithElo(winnerPlayer) : gameState.winner} Wins!`;
         text.style.color = getColorCSS(gameState.winner);
       }
       banner.style.display = 'flex';
@@ -522,8 +701,17 @@ window.GamePage = (() => {
     const pts = gameState.points || { white: 0, black: 0 };
     const margin = Math.abs((pts.white || 0) - (pts.black || 0));
     const result = gameState.result || {};
-    const reason = result.reason || 'Game finished by rules resolution.';
+    let reason = result.reason || 'Game finished by rules resolution.';
     const resultType = result.type || (gameState.winner === 'draw' ? 'draw' : 'win');
+
+    // check if a player has resigned or been eliminated and adjust reason accordingly
+    if (resultType === 'resign') {
+      reason = `${formatPlayerWithElo(gameState.players.find(p => p.color === result.color))} resigned.`;
+    } if (resultType === 'draw') {
+      reason = result.reason || 'The game ended in a draw.'; 
+    } else if (resultType === 'eliminated') {
+      reason = `${formatPlayerWithElo(gameState.players.find(p => p.color === result.color))} has been eliminated (abandonment).`;
+    }
 
     const me = gameState.players.find((p) => p.id === user.id);
     let verdict = 'Game complete';
@@ -537,8 +725,10 @@ window.GamePage = (() => {
     panel.innerHTML = `
       <div style="font-weight:700; margin-bottom:4px;">Outcome: ${verdict}</div>
       <div style="font-size:13px; opacity:0.92; margin-bottom:2px;">Reason: ${reason}</div>
-      <div style="font-size:13px; opacity:0.92;">Score: White ${pts.white} - Black ${pts.black} (margin ${margin} or ${Math.floor(Math.max(pts.white, pts.black) / Math.min(pts.white, pts.black)) * 100}% > 50%)</div>
+      <div style="font-size:13px; opacity:0.92;">Score: White ${pts.white} - Black ${pts.black} (margin = ${margin}  (${Math.floor((Math.max(pts.white, pts.black) / Math.min(pts.white, pts.black)) * 1000)/10 -100}%)</div>
+      ${renderSportsmanshipControls(user)}
     `;
+    bindSportsmanshipControls(user);
   }
 
   function toEngineState(game) {
@@ -632,7 +822,7 @@ window.GamePage = (() => {
       return `
         <div class="player-clock ${isActive ? 'active' : ''} ${isElim ? 'eliminated' : ''} ${low ? 'low' : ''}">
           <span class="clock-dot" style="background:${getColorCSS(p.color)}"></span>
-          <span class="clock-name">${p.username}</span>
+          <span class="clock-name">${formatPlayerWithElo(p)}</span>
           <span class="clock-time">${isElim ? 'OUT' : display}</span>
         </div>
       `;
@@ -685,6 +875,25 @@ window.GamePage = (() => {
       if (m.event === 'draw') {
         return `<div class="move-entry draw-agreed">
           <span>🤝 Game ended in a draw (${m.reason})</span>
+          ${timeTag}
+        </div>`;
+      }
+      if (m.event === 'abort') {
+        return `<div class="move-entry draw-agreed">
+          <span>⛔ Game aborted (${m.reason})</span>
+          ${timeTag}
+        </div>`;
+      }
+      if (m.event === 'abandonTimeout') {
+        return `<div class="move-entry elimination">
+          <span class="move-dot" style="background:${getColorCSS(m.color)}"></span>
+          <span>${String(m.color || '').toUpperCase()} lost by inactivity timeout</span>
+          ${timeTag}
+        </div>`;
+      }
+      if (m.event === 'sportsmanshipRating') {
+        return `<div class="move-entry">
+          <span>⭐ Sportsmanship rating submitted: ${m.rating}/5</span>
           ${timeTag}
         </div>`;
       }
@@ -795,8 +1004,10 @@ window.GamePage = (() => {
     if (timerTickHandler) SocketClient.off('game:timerTick', timerTickHandler);
     if (moveErrorHandler) SocketClient.off('game:moveError', moveErrorHandler);
     if (drawRequestedHandler) SocketClient.off('game:drawRequested', drawRequestedHandler);
+    if (abandonWarningHandler) SocketClient.off('game:abandonWarning', abandonWarningHandler);
 
     if (clockInterval) { clearInterval(clockInterval); clockInterval = null; }
+    if (preGameStatsModalTimer) { clearTimeout(preGameStatsModalTimer); preGameStatsModalTimer = null; }
     renderer = null;
     gameState = null;
     selectedPiece = null;
@@ -810,6 +1021,9 @@ window.GamePage = (() => {
     timerTickHandler = null;
     moveErrorHandler = null;
     drawRequestedHandler = null;
+    abandonWarningHandler = null;
+    playerStatsById = {};
+    playerStatsLoading = new Set();
   }
 
   return { render, cleanup };

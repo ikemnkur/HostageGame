@@ -213,7 +213,7 @@ window.PracticePage = (() => {
       ? `${String(gameState.result.winner || '').toUpperCase()} wins`
       : (gameState.result.type === 'null' ? 'Null game' : 'Draw');
 
-    line.textContent = `Outcome: ${verdict} · White ${pts.white} - Black ${pts.black} (margin ${margin} or ${Math.floor(Math.max(pts.white, pts.black) / Math.min(pts.white, pts.black)) * 100}% > 50%)`;
+    line.textContent = `Outcome: ${verdict} · White ${pts.white} - Black ${pts.black} (margin = ${margin}  (${Math.floor((Math.max(pts.white, pts.black) / Math.min(pts.white, pts.black)) * 1000)/10 - 100}%)`;
     help.textContent = `Reason: ${reason}`;
     card.style.display = 'block';
   }

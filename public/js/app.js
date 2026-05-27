@@ -29,6 +29,16 @@ window.App = (() => {
     } else if (path === '/stats') {
       StatsPage.render();
       currentCleanup = StatsPage.cleanup;
+    } else if (path === '/profile') {
+      ProfilePage.render();
+      currentCleanup = ProfilePage.cleanup;
+    } else if (path.startsWith('/profile/')) {
+      const userId = path.split('/profile/')[1];
+      ProfilePage.render(userId);
+      currentCleanup = ProfilePage.cleanup;
+    } else if (path === '/admin') {
+      AdminPage.render();
+      currentCleanup = AdminPage.cleanup;
     } else if (path.startsWith('/review/')) {
       const gameId = path.split('/review/')[1];
       ReviewPage.render(gameId);

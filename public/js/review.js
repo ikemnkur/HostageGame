@@ -298,7 +298,7 @@ window.ReviewPage = (() => {
     panel.innerHTML = `
       <div style="font-weight:700; margin-bottom:4px;">Outcome: ${verdict}</div>
       <div style="font-size:13px; opacity:0.92; margin-bottom:2px;">Reason: ${reason}</div>
-      <div style="font-size:13px; opacity:0.92;">Score: White ${pts.white} - Black ${pts.black} (margin ${margin} or ${Math.floor(Math.max(pts.white, pts.black) / Math.min(pts.white, pts.black)) * 100}% > 50%)</div>
+      <div style="font-size:13px; opacity:0.92;">Score: White ${pts.white} - Black ${pts.black} (margin = ${margin}  (${Math.floor((Math.max(pts.white, pts.black) / Math.min(pts.white, pts.black)) * 1000)/10 - 100}%)</div>
     `;
   }
 

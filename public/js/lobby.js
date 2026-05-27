@@ -3,6 +3,8 @@
 window.LobbyPage = (() => {
   let pollTimer = null;
   let lobbyUpdateHandler = null;
+  let userStatsSummary = null;
+  let userSearchTimer = null;
 
   function getUser() {
     try { return JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user')); } catch { return null; }
@@ -16,6 +18,28 @@ window.LobbyPage = (() => {
     } catch { return []; }
   }
 
+  async function fetchUserStats(userId) {
+    try {
+      const res = await fetch(`/api/users/${userId}/stats`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data?.stats || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function searchUsers(query) {
+    try {
+      const res = await fetch(`/api/users/search?q=${encodeURIComponent(query)}`);
+      const data = await res.json();
+      if (!res.ok) return [];
+      return data.users || [];
+    } catch {
+      return [];
+    }
+  }
+
   function render() {
     const user = getUser();
     if (!user) { window.App.navigate('/'); return; }
@@ -26,7 +50,7 @@ window.LobbyPage = (() => {
         <div class="lobby-header">
           <div>
             <h1>Hostage Chess Lobby</h1>
-            <p class="user-info">Playing as <strong>${user.username}</strong></p>
+            <p class="user-info" id="lobby-user-info">Playing as <strong>${user.username}</strong></p>
           </div>
           <div class="lobby-actions">
             <button id="show-create-form-btn">Create Game</button>
@@ -83,6 +107,12 @@ window.LobbyPage = (() => {
 
         <div id="game-list" class="game-list">
           <div class="empty-lobby">Loading games…</div>
+        </div>
+
+        <div class="card" style="margin-top:16px; padding:12px;">
+          <h3 style="margin-bottom:8px;">Find Player Profiles</h3>
+          <input type="text" id="user-search-input" placeholder="Search username..." autocomplete="off" />
+          <div id="user-search-results" style="margin-top:8px;"></div>
         </div>
       </div>
     `;
@@ -142,7 +172,16 @@ window.LobbyPage = (() => {
       window.App.navigate('/');
     });
 
+    const searchInput = document.getElementById('user-search-input');
+    if (searchInput) {
+      searchInput.addEventListener('input', () => {
+        if (userSearchTimer) clearTimeout(userSearchTimer);
+        userSearchTimer = setTimeout(() => runUserSearch(searchInput.value), 250);
+      });
+    }
+
     loadGames();
+    loadUserSummary();
 
     // Real-time updates
     SocketClient.connect();
@@ -151,6 +190,55 @@ window.LobbyPage = (() => {
 
     // Also poll as fallback
     pollTimer = setInterval(loadGames, 5000);
+  }
+
+  async function runUserSearch(raw) {
+    const q = String(raw || '').trim();
+    const container = document.getElementById('user-search-results');
+    if (!container) return;
+
+    if (q.length < 2) {
+      container.innerHTML = '<p class="empty-message">Type at least 2 characters.</p>';
+      return;
+    }
+
+    const users = await searchUsers(q);
+    if (!users.length) {
+      container.innerHTML = '<p class="empty-message">No users found.</p>';
+      return;
+    }
+
+    container.innerHTML = users.map((u) => `
+      <button class="btn-secondary profile-result-btn" data-user-id="${u.id}" style="display:flex;justify-content:space-between;align-items:center;width:100%;margin-bottom:6px;">
+        <span>${u.username}${u.country ? ` · ${u.country}` : ''}</span>
+        <strong>ELO ${u.elo}</strong>
+      </button>
+    `).join('');
+
+    container.querySelectorAll('.profile-result-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        window.App.navigate(`/profile/${btn.dataset.userId}`);
+      });
+    });
+  }
+
+  async function loadUserSummary() {
+    const user = getUser();
+    if (!user) return;
+    userStatsSummary = await fetchUserStats(user.id);
+    const infoEl = document.getElementById('lobby-user-info');
+    if (!infoEl) return;
+
+    if (!userStatsSummary) {
+      infoEl.innerHTML = `Playing as <strong>${user.username}</strong>`;
+      return;
+    }
+
+    const wins = userStatsSummary.wins || 0;
+    const losses = userStatsSummary.losses || 0;
+    const draws = userStatsSummary.draws || 0;
+    const elo = userStatsSummary.elo != null ? userStatsSummary.elo : 1200;
+    infoEl.innerHTML = `Playing as <strong>${user.username}</strong> · ELO <strong>${elo}</strong> · ${wins}W/${losses}L/${draws}D`;
   }
 
   async function loadGames() {
@@ -195,6 +283,7 @@ window.LobbyPage = (() => {
       }
 
       let statusLabel = g.status === 'playing' ? '🔴 Live' : `${g.playerCount}/${maxP} players · waiting`;
+      const creator = g.createdBy || 'Unknown';
 
       let actionBtn = '';
       if (canJoin) {
@@ -211,7 +300,7 @@ window.LobbyPage = (() => {
         <div class="card game-card ${g.status === 'playing' ? 'game-card-active' : ''}">
           <div class="game-info">
             <h3>${g.name} ${timerBadge}</h3>
-            <p class="player-count">${statusLabel}</p>
+            <p class="player-count">${statusLabel} · by ${creator}</p>
           </div>
           <div class="player-dots">${dots.join('')}</div>
           ${actionBtn}
@@ -301,6 +390,7 @@ window.LobbyPage = (() => {
 
   function cleanup() {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    if (userSearchTimer) { clearTimeout(userSearchTimer); userSearchTimer = null; }
     if (lobbyUpdateHandler) SocketClient.off('lobby:update', lobbyUpdateHandler);
     lobbyUpdateHandler = null;
   }

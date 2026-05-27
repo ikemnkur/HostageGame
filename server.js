@@ -4,6 +4,7 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcrypt');
 require('dotenv').config();
@@ -67,6 +68,14 @@ const activeTimers = {};  // gameId -> intervalId
 const gameClocks  = {};   // gameId -> { color: remainingMs, ... }
 const turnStartTs = {};   // gameId -> Date.now() when current turn began
 const drawRequests = {};  // gameId -> { requestedBy: userId, agreedBy: [userIds] }
+const inactivityWarnings = {}; // gameId -> { 30: bool, 60: bool, 80: bool }
+const PRE_GAME_STATS_DELAY_MS = 4500;
+const ELO_K_FACTOR = 32;
+const INACTIVITY_FORFEIT_MS = 90000;
+const ABORT_NULL_MOVE_LIMIT = 7;
+const ABORT_NULL_ELO_PENALTY = -3;
+const ABORT_FORFEIT_WIN_ELO = 3;
+const ABORT_FORFEIT_LOSS_ELO = -20;
 
 const TABLES = {
   accounts: 'account',
@@ -86,19 +95,88 @@ function parseJSON(val) {
 
 function rowToUser(row) {
   if (!row) return null;
+  const sportsmanshipRatings = parseRatingsCsv(row.sportsmanship_ratings);
+  const sportsmanshipAverage = sportsmanshipRatings.length
+    ? Number((sportsmanshipRatings.reduce((sum, n) => sum + n, 0) / sportsmanshipRatings.length).toFixed(2))
+    : null;
   return {
     id: row.id,
     username: row.username,
     password: row.password || null,
     email: row.email || null,
+    age: row.age || null,
+    gender: row.gender || null,
+    country: row.country || null,
+    fingerprintHash: row.fingerprint_hash || null,
     stats: {
       wins: row.wins || 0,
       losses: row.losses || 0,
       draws: row.draws || 0,
       gamesPlayed: row.games_played || 0,
       elo: row.elo != null ? row.elo : 1200,
+      sportsmanshipRatings,
+      sportsmanshipAverage,
     },
     createdAt: row.created_at,
+  };
+}
+
+function parseRatingsCsv(csv) {
+  if (!csv) return [];
+  return String(csv)
+    .split(',')
+    .map((n) => Number.parseInt(n.trim(), 10))
+    .filter((n) => Number.isInteger(n) && n >= 0 && n <= 5);
+}
+
+function sortObjectDeep(value) {
+  if (Array.isArray(value)) return value.map(sortObjectDeep);
+  if (value && typeof value === 'object') {
+    return Object.keys(value).sort().reduce((acc, k) => {
+      acc[k] = sortObjectDeep(value[k]);
+      return acc;
+    }, {});
+  }
+  return value;
+}
+
+function normalizeFingerprint(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  try {
+    const parsed = JSON.parse(s);
+    return JSON.stringify(sortObjectDeep(parsed));
+  } catch {
+    return s.toLowerCase().replace(/\s+/g, ' ').trim();
+  }
+}
+
+function buildFingerprintHash(raw) {
+  const normalized = normalizeFingerprint(raw);
+  if (!normalized) return null;
+  return crypto.createHash('sha256').update(normalized).digest('hex');
+}
+
+function serializeRatingsCsv(ratings) {
+  return (ratings || []).slice(-50).join(',');
+}
+
+function sanitizeProfileField(value, maxLen = 255) {
+  if (value === null || value === undefined) return null;
+  const s = String(value).trim();
+  if (!s) return null;
+  return s.slice(0, maxLen);
+}
+
+function parseProfileInput(input = {}) {
+  const fingerprint = sanitizeProfileField(input.fingerprint, 4096);
+  return {
+    age: sanitizeProfileField(input.age),
+    gender: sanitizeProfileField(input.gender),
+    country: sanitizeProfileField(input.country),
+    fingerprint,
+    fingerprintHash: buildFingerprintHash(fingerprint),
   };
 }
 
@@ -267,7 +345,8 @@ async function sendPasswordResetEmailHelper(account, code) {
 }
 
 // Ensure the game stats record exists for an account (creates one on first play)
-async function ensureHostageChessUser(accountRow) {
+async function ensureHostageChessUser(accountRow, profileInput = {}) {
+  const profile = parseProfileInput(profileInput);
   const existing = await knex(TABLES.users).where({ id: accountRow.id }).first();
   if (!existing) {
     await knex(TABLES.users).insert({
@@ -275,10 +354,28 @@ async function ensureHostageChessUser(accountRow) {
       username: accountRow.username,
       wins: 0, losses: 0, draws: 0, games_played: 0,
       elo: 1200,
+      sportsmanship_ratings: '',
+      age: profile.age,
+      gender: profile.gender,
+      country: profile.country,
+      fingerprint: profile.fingerprint,
+      fingerprint_hash: profile.fingerprintHash,
       created_at: Date.now(),
     });
     return await knex(TABLES.users).where({ id: accountRow.id }).first();
   }
+
+  const updates = {};
+  if (profile.age) updates.age = profile.age;
+  if (profile.gender) updates.gender = profile.gender;
+  if (profile.country) updates.country = profile.country;
+  if (profile.fingerprint) updates.fingerprint = profile.fingerprint;
+  if (profile.fingerprintHash) updates.fingerprint_hash = profile.fingerprintHash;
+  if (Object.keys(updates).length > 0) {
+    await knex(TABLES.users).where({ id: accountRow.id }).update(updates);
+    return await knex(TABLES.users).where({ id: accountRow.id }).first();
+  }
+
   return existing;
 }
 
@@ -293,6 +390,9 @@ function safeAccountResponse(row, statsRow = null) {
     verification: row.verification || 'false',
     profilePicture: row.profilePicture || null,
     bio: row.bio || null,
+    age: statsRow?.age || null,
+    gender: statsRow?.gender || null,
+    country: statsRow?.country || null,
     isBanned: !!row.isBanned,
     createdAt: row.createdAt,
     stats: statsRow ? {
@@ -301,6 +401,8 @@ function safeAccountResponse(row, statsRow = null) {
       draws:       statsRow.draws       || 0,
       gamesPlayed: statsRow.games_played || 0,
       elo:         statsRow.elo != null ? statsRow.elo : 1200,
+      sportsmanshipRatings: parseRatingsCsv(statsRow.sportsmanship_ratings),
+      fingerprintHash: statsRow.fingerprint_hash || null,
     } : null,
   };
 }
@@ -342,7 +444,8 @@ app.use(express.static(path.join(__dirname, 'public'), {
 // ── Register ──
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { username, email, password, firstName, lastName } = req.body;
+    const { username, email, password, firstName, lastName, age, gender, country, fingerprint } = req.body;
+    const profile = parseProfileInput({ age, gender, country, fingerprint });
 
     if (!username || username.trim().length < 2 || username.trim().length > 50)
       return res.status(400).json({ error: 'Username must be 2–50 characters.' });
@@ -350,6 +453,13 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Valid email is required.' });
     if (!password || password.length < 6)
       return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    if (!profile.age || !profile.gender || !profile.country)
+      return res.status(400).json({ error: 'Age, gender, and country are required.' });
+    const ageNum = Number.parseInt(profile.age, 10);
+    if (!Number.isInteger(ageNum) || ageNum < 13 || ageNum > 120) {
+      return res.status(400).json({ error: 'Age must be a number between 13 and 120.' });
+    }
+    profile.age = String(ageNum);
 
     // Check uniqueness
     const conflict = await knex(TABLES.accounts)
@@ -381,7 +491,7 @@ app.post('/api/auth/register', async (req, res) => {
     });
 
     const newAccount = await knex(TABLES.accounts).where({ id }).first();
-    const statsRow = await ensureHostageChessUser(newAccount);
+    const statsRow = await ensureHostageChessUser(newAccount, profile);
 
     // Send verification email if email service is configured
     if (process.env.SES_SMTP_USER) {
@@ -404,7 +514,7 @@ app.post('/api/auth/register', async (req, res) => {
 // ── Login ──
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { login, password } = req.body; // login = username or email
+    const { login, password, fingerprint } = req.body; // login = username or email
     if (!login || !password)
       return res.status(400).json({ error: 'Username/email and password are required.' });
 
@@ -432,7 +542,7 @@ app.post('/api/auth/login', async (req, res) => {
     });
 
     // Ensure game stats row exists
-    const statsRow = await ensureHostageChessUser(row);
+    const statsRow = await ensureHostageChessUser(row, { fingerprint });
 
     res.json({
       success: true,
@@ -569,6 +679,7 @@ app.get('/api/games', async (_req, res) => {
     const rows = await knex(TABLES.games).whereNot({ status: 'finished' });
     const games = rows.map(r => {
       const g = rowToGame(r);
+      const creator = (g.players && g.players[0]) ? g.players[0] : null;
       return {
         id: g.id,
         name: g.name,
@@ -576,6 +687,8 @@ app.get('/api/games', async (_req, res) => {
         playerCount: g.players.length,
         maxPlayers: g.maxPlayers,
         players: g.players.map(p => ({ username: p.username, color: p.color })),
+        createdBy: creator ? creator.username : null,
+        createdById: creator ? creator.id : null,
         timerMode: g.timerMode,
         timerValue: g.timerValue,
         timeControl: g.timeControl || null,
@@ -676,8 +789,8 @@ app.post('/api/games/:gameId/join', async (req, res) => {
       game.board = HostageEngine.createStartingBoard();
       game.points = { white: 0, black: 0 };
       game.queenCrossedToOwnSide = { white: false, black: false };
-      game.timerStartsAt = Date.now() + 3000;
-      setTimeout(() => startGameTimers(game), 3000);
+      game.timerStartsAt = Date.now() + PRE_GAME_STATS_DELAY_MS;
+      setTimeout(() => startGameTimers(game), PRE_GAME_STATS_DELAY_MS);
     }
 
     await saveGame(game);
@@ -732,21 +845,209 @@ app.get('/api/games/:gameId/history/download', async (req, res) => {
     const game = await getGame(req.params.gameId);
     if (!game) return res.status(404).json({ error: 'Game not found.' });
     res.setHeader('Content-Disposition', `attachment; filename="game-${game.id}.json"`);
-    res.json({
-      id: game.id,
-      name: game.name,
-      status: game.status,
-      players: game.players,
-      winner: game.winner,
-      result: game.result || null,
-      points: game.points || { white: 0, black: 0 },
-      turnCount: game.turnCount,
-      moveHistory: game.moveHistory || [],
-      finishedAt: game.finishedAt,
-      createdAt: game.createdAt,
-    });
+    res.setHeader('Content-Type', 'application/json');
+    res.send(JSON.stringify(toCompactHistory(game)));
   } catch (e) {
     console.error('[games:history:download]', e.message);
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+function toCompactHistory(game) {
+  const compactPlayers = (game.players || []).map((p) => [p.id, p.username, p.color]);
+  const compactMoves = (game.moveHistory || []).map((m) => {
+    const base = {
+      t: m.turn,
+      f: m.from,
+      o: m.to,
+      ts: m.timestamp,
+    };
+
+    if (m.event) {
+      return {
+        ...base,
+        e: m.event,
+        c: m.color,
+        a: m.action,
+        r: m.reason,
+        by: m.userId || m.fromUserId || null,
+        to: m.toUserId || null,
+        rt: m.rating != null ? m.rating : undefined,
+      };
+    }
+
+    if (m.action) {
+      return {
+        ...base,
+        a: m.action,
+      };
+    }
+
+    return base;
+  });
+
+  return {
+    v: 2,
+    id: game.id,
+    n: game.name,
+    s: game.status,
+    w: game.winner,
+    r: game.result || null,
+    p: game.points || { white: 0, black: 0 },
+    tc: game.turnCount,
+    pl: compactPlayers,
+    m: compactMoves,
+    ca: game.createdAt,
+    fa: game.finishedAt,
+  };
+}
+
+async function applyAbortNullPenalty(abortingPlayer) {
+  const row = await knex(TABLES.users).where({ id: abortingPlayer.id }).first();
+  const currentElo = row?.elo != null ? row.elo : 1200;
+  await knex(TABLES.users).where({ id: abortingPlayer.id }).update({
+    elo: currentElo + ABORT_NULL_ELO_PENALTY,
+  });
+}
+
+async function applyForfeitOutcome(game, abandoningPlayer, source = 'abandonment') {
+  const winner = (game.players || []).find((p) => p.id !== abandoningPlayer.id);
+  if (!winner) return;
+
+  game.status = 'finished';
+  game.winner = winner.color;
+  game.result = {
+    type: 'win',
+    reason: source,
+    abandonedBy: abandoningPlayer.id,
+    winner: winner.color,
+  };
+
+  const rows = await knex(TABLES.users).whereIn('id', [winner.id, abandoningPlayer.id]);
+  const byId = new Map(rows.map((r) => [r.id, r]));
+
+  const winnerRow = byId.get(winner.id) || {};
+  const loserRow = byId.get(abandoningPlayer.id) || {};
+
+  await knex(TABLES.users).where({ id: winner.id }).update({
+    wins: (winnerRow.wins || 0) + 1,
+    games_played: (winnerRow.games_played || 0) + 1,
+    elo: (winnerRow.elo != null ? winnerRow.elo : 1200) + ABORT_FORFEIT_WIN_ELO,
+  });
+
+  await knex(TABLES.users).where({ id: abandoningPlayer.id }).update({
+    losses: (loserRow.losses || 0) + 1,
+    games_played: (loserRow.games_played || 0) + 1,
+    elo: (loserRow.elo != null ? loserRow.elo : 1200) + ABORT_FORFEIT_LOSS_ELO,
+  });
+
+  const now = Date.now();
+  game.finishedAt = now;
+  await knex(TABLES.games).where({ id: game.id }).update({ finished_at: now });
+}
+
+// Abort game (null game if before opening move limit)
+app.post('/api/games/:gameId/abort', async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const game = await getGame(req.params.gameId);
+    if (!game) return res.status(404).json({ error: 'Game not found.' });
+    if (game.status !== 'playing') return res.status(400).json({ error: 'Only active games can be aborted.' });
+
+    const abortingPlayer = game.players.find((p) => p.id === userId);
+    if (!abortingPlayer) return res.status(403).json({ error: 'You are not a player in this game.' });
+
+    const moveCount = (game.moveHistory || []).filter((m) => Array.isArray(m.from) && Array.isArray(m.to)).length;
+    if (!game.moveHistory) game.moveHistory = [];
+
+    if (moveCount < ABORT_NULL_MOVE_LIMIT) {
+      game.status = 'finished';
+      game.winner = 'draw';
+      game.result = { type: 'null', reason: 'aborted-early', abortedBy: userId };
+      game.moveHistory.push({
+        turn: game.turnCount,
+        event: 'abort',
+        reason: 'null',
+        userId,
+        timestamp: Date.now(),
+      });
+      await applyAbortNullPenalty(abortingPlayer);
+      const now = Date.now();
+      game.finishedAt = now;
+      await knex(TABLES.games).where({ id: game.id }).update({ finished_at: now });
+    } else {
+      game.moveHistory.push({
+        turn: game.turnCount,
+        event: 'abort',
+        reason: 'forfeit',
+        userId,
+        timestamp: Date.now(),
+      });
+      await applyForfeitOutcome(game, abortingPlayer, 'abort');
+    }
+
+    clearInterval(activeTimers[game.id]);
+    delete activeTimers[game.id];
+    delete inactivityWarnings[game.id];
+    delete drawRequests[game.id];
+
+    await saveGame(game);
+    saveGameHistory(game);
+    io.to(game.id).emit('game:update', sanitizeGame(game));
+    io.emit('lobby:update');
+    res.json({ game: sanitizeGame(game) });
+  } catch (e) {
+    console.error('[games:abort]', e.message);
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+app.post('/api/games/:gameId/sportsmanship', async (req, res) => {
+  try {
+    const { fromUserId, toUserId, rating } = req.body;
+    const score = Number.parseInt(rating, 10);
+    if (!Number.isInteger(score) || score < 0 || score > 5) {
+      return res.status(400).json({ error: 'Rating must be an integer from 0 to 5.' });
+    }
+
+    const game = await getGame(req.params.gameId);
+    if (!game) return res.status(404).json({ error: 'Game not found.' });
+    if (game.status !== 'finished') return res.status(400).json({ error: 'Rate sportsmanship after game completion.' });
+    if (fromUserId === toUserId) return res.status(400).json({ error: 'You cannot rate yourself.' });
+
+    const isFromPlayer = (game.players || []).some((p) => p.id === fromUserId);
+    const isToPlayer = (game.players || []).some((p) => p.id === toUserId);
+    if (!isFromPlayer || !isToPlayer) return res.status(400).json({ error: 'Both users must be players in this game.' });
+
+    const alreadyRated = (game.moveHistory || []).some((m) =>
+      m.event === 'sportsmanshipRating' && m.fromUserId === fromUserId && m.toUserId === toUserId
+    );
+    if (alreadyRated) return res.status(400).json({ error: 'You already rated this player for this game.' });
+
+    const toRow = await knex(TABLES.users).where({ id: toUserId }).first();
+    if (!toRow) return res.status(404).json({ error: 'Rated player not found.' });
+
+    const nextRatings = [...parseRatingsCsv(toRow.sportsmanship_ratings), score].slice(-50);
+    await knex(TABLES.users).where({ id: toUserId }).update({
+      sportsmanship_ratings: serializeRatingsCsv(nextRatings),
+    });
+
+    if (!game.moveHistory) game.moveHistory = [];
+    game.moveHistory.push({
+      turn: game.turnCount,
+      event: 'sportsmanshipRating',
+      fromUserId,
+      toUserId,
+      rating: score,
+      timestamp: Date.now(),
+    });
+
+    await saveGame(game);
+    saveGameHistory(game);
+    io.to(game.id).emit('game:update', sanitizeGame(game));
+    res.json({ success: true, ratingsCount: nextRatings.length });
+  } catch (e) {
+    console.error('[games:sportsmanship]', e.message);
     res.status(500).json({ error: 'Server error.' });
   }
 });
@@ -765,6 +1066,71 @@ app.get('/api/users/:userId/stats', async (req, res) => {
     res.json({ ...safe });
   } catch (e) {
     console.error('[users:stats]', e.message);
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+// User search (for lobby profile lookup)
+app.get('/api/users/search', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json({ users: [] });
+
+    const rows = await knex(TABLES.users)
+      .select('id', 'username', 'elo', 'country', 'created_at')
+      .where('username', 'like', `%${q}%`)
+      .orderBy('elo', 'desc')
+      .limit(12);
+
+    const users = rows.map((r) => ({
+      id: r.id,
+      username: r.username,
+      elo: r.elo != null ? r.elo : 1200,
+      country: r.country || null,
+      createdAt: r.created_at || null,
+    }));
+    res.json({ users });
+  } catch (e) {
+    console.error('[users:search]', e.message);
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+// Submit report against a user for admin review
+app.post('/api/users/:userId/report', async (req, res) => {
+  try {
+    const targetUserId = req.params.userId;
+    const reporterId = String(req.body.reporterId || '').trim();
+    const reason = String(req.body.reason || '').trim();
+    const details = String(req.body.details || '').trim();
+
+    if (!reporterId) return res.status(400).json({ error: 'Missing reporterId.' });
+    if (!reason) return res.status(400).json({ error: 'Reason is required.' });
+    if (reason.length > 120) return res.status(400).json({ error: 'Reason is too long.' });
+    if (details.length > 2000) return res.status(400).json({ error: 'Details are too long.' });
+    if (targetUserId === reporterId) return res.status(400).json({ error: 'You cannot report yourself.' });
+
+    const [target, reporter] = await Promise.all([
+      knex(TABLES.users).where({ id: targetUserId }).first(),
+      knex(TABLES.users).where({ id: reporterId }).first(),
+    ]);
+
+    if (!target) return res.status(404).json({ error: 'Reported user not found.' });
+    if (!reporter) return res.status(404).json({ error: 'Reporter user not found.' });
+
+    await knex('HostageChess_user_reports').insert({
+      id: uuidv4(),
+      reported_user_id: targetUserId,
+      reporter_user_id: reporterId,
+      reason,
+      details: details || null,
+      status: 'open',
+      created_at: Date.now(),
+    });
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('[users:report]', e.message);
     res.status(500).json({ error: 'Server error.' });
   }
 });
@@ -818,6 +1184,103 @@ app.get('/api/leaderboard', async (_req, res) => {
     res.json({ leaderboard });
   } catch (e) {
     console.error('[leaderboard]', e.message);
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+// Admin: find repeated matching browser fingerprints
+app.get('/api/admin/fingerprint-flags', async (req, res) => {
+  try {
+    const expectedKey = process.env.ADMIN_API_KEY || '';
+    const suppliedKey = req.headers['x-admin-key'];
+    if (!expectedKey) return res.status(503).json({ error: 'ADMIN_API_KEY is not configured.' });
+    if (!suppliedKey || suppliedKey !== expectedKey) return res.status(403).json({ error: 'Forbidden.' });
+
+    const minCount = Math.max(2, Number.parseInt(req.query.minCount, 10) || 2);
+    const hashRows = await knex(TABLES.users)
+      .select('fingerprint_hash')
+      .count({ count: '*' })
+      .whereNotNull('fingerprint_hash')
+      .where('fingerprint_hash', '<>', '')
+      .groupBy('fingerprint_hash')
+      .havingRaw('COUNT(*) >= ?', [minCount])
+      .orderBy('count', 'desc');
+
+    const hashes = hashRows.map((r) => r.fingerprint_hash).filter(Boolean);
+    if (hashes.length === 0) {
+      return res.json({ minCount, groups: [], totalFlaggedAccounts: 0 });
+    }
+
+    const users = await knex(TABLES.users)
+      .select('id', 'username', 'fingerprint_hash', 'age', 'gender', 'country', 'created_at')
+      .whereIn('fingerprint_hash', hashes)
+      .orderBy('created_at', 'desc');
+
+    const usersByHash = users.reduce((acc, u) => {
+      const key = u.fingerprint_hash;
+      if (!acc[key]) acc[key] = [];
+      acc[key].push({
+        id: u.id,
+        username: u.username,
+        age: u.age || null,
+        gender: u.gender || null,
+        country: u.country || null,
+        createdAt: u.created_at || null,
+      });
+      return acc;
+    }, {});
+
+    const groups = hashRows.map((r) => ({
+      fingerprintHash: r.fingerprint_hash,
+      matchCount: Number(r.count) || 0,
+      accounts: usersByHash[r.fingerprint_hash] || [],
+    }));
+
+    const totalFlaggedAccounts = groups.reduce((sum, g) => sum + g.accounts.length, 0);
+    res.json({ minCount, groups, totalFlaggedAccounts });
+  } catch (e) {
+    console.error('[admin:fingerprint-flags]', e.message);
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+app.get('/api/admin/user-reports', async (req, res) => {
+  try {
+    const expectedKey = process.env.ADMIN_API_KEY || '';
+    const suppliedKey = req.headers['x-admin-key'];
+    if (!expectedKey) return res.status(503).json({ error: 'ADMIN_API_KEY is not configured.' });
+    if (!suppliedKey || suppliedKey !== expectedKey) return res.status(403).json({ error: 'Forbidden.' });
+
+    const status = String(req.query.status || '').trim();
+    const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
+
+    let query = knex('HostageChess_user_reports as r')
+      .leftJoin(`${TABLES.users} as u1`, 'u1.id', 'r.reported_user_id')
+      .leftJoin(`${TABLES.users} as u2`, 'u2.id', 'r.reporter_user_id')
+      .select(
+        'r.id', 'r.reason', 'r.details', 'r.status', 'r.created_at',
+        'r.reported_user_id', 'u1.username as reported_username',
+        'r.reporter_user_id', 'u2.username as reporter_username'
+      )
+      .orderBy('r.created_at', 'desc')
+      .limit(limit);
+
+    if (status) query = query.where('r.status', status);
+    const rows = await query;
+
+    const reports = rows.map((r) => ({
+      id: r.id,
+      reason: r.reason,
+      details: r.details || '',
+      status: r.status,
+      createdAt: r.created_at,
+      reportedUser: { id: r.reported_user_id, username: r.reported_username || null },
+      reporterUser: { id: r.reporter_user_id, username: r.reporter_username || null },
+    }));
+
+    res.json({ reports });
+  } catch (e) {
+    console.error('[admin:user-reports]', e.message);
     res.status(500).json({ error: 'Server error.' });
   }
 });
@@ -923,7 +1386,7 @@ io.on('connection', (socket) => {
       }
 
       game.currentTurn = result.state.turn === 'white' ? 0 : 1;
-      turnStartTs[game.id] = Date.now();
+      resetTurnInactivityWindow(game.id);
 
       if (result.state.status === 'finished' && result.state.result) {
         game.status = 'finished';
@@ -931,6 +1394,8 @@ io.on('connection', (socket) => {
         else game.winner = 'draw';
         clearInterval(activeTimers[game.id]);
         delete activeTimers[game.id];
+        delete inactivityWarnings[game.id];
+        delete drawRequests[game.id];
         await updatePlayerStats(game);
       }
 
@@ -964,10 +1429,12 @@ io.on('connection', (socket) => {
         game.status = 'finished';
         clearInterval(activeTimers[game.id]);
         delete activeTimers[game.id];
+        delete inactivityWarnings[game.id];
+        delete drawRequests[game.id];
         await updatePlayerStats(game);
       } else if (game.currentTurn === game.players.indexOf(player)) {
         game.currentTurn = advanceTurn(game);
-        turnStartTs[game.id] = Date.now();
+        resetTurnInactivityWindow(game.id);
       }
 
       await saveGame(game);
@@ -1012,6 +1479,7 @@ io.on('connection', (socket) => {
           clearInterval(activeTimers[game.id]);
           delete activeTimers[game.id];
           delete drawRequests[gameId];
+          delete inactivityWarnings[game.id];
 
           if (!game.moveHistory) game.moveHistory = [];
           game.moveHistory.push({ turn: game.turnCount, event: 'draw', reason: 'agreement', timestamp: Date.now() });
@@ -1036,8 +1504,6 @@ io.on('connection', (socket) => {
 // ─── Timer management ─────────────────────────────────────
 
 function startGameTimers(game) {
-  if (game.timerMode === 'none') return;
-
   if (game.timerMode === 'total') {
     const totalMs = game.timerValue * 60 * 1000;
     gameClocks[game.id] = {};
@@ -1052,8 +1518,13 @@ function startGameTimers(game) {
     game.players.forEach(p => { gameClocks[game.id][p.color] = turnMs; });
   }
 
-  turnStartTs[game.id] = Date.now();
+  resetTurnInactivityWindow(game.id);
   activeTimers[game.id] = setInterval(() => tickGameTimer(game.id), 1000);
+}
+
+function resetTurnInactivityWindow(gameId) {
+  turnStartTs[gameId] = Date.now();
+  inactivityWarnings[gameId] = { 30: false, 60: false, 80: false };
 }
 
 async function tickGameTimer(gameId) {
@@ -1065,13 +1536,50 @@ async function tickGameTimer(gameId) {
       return;
     }
 
-    const clocks = gameClocks[gameId];
-    if (!clocks) return;
-
     const currentPlayer = game.players[game.currentTurn];
     if (!currentPlayer) return;
     const color = currentPlayer.color;
     const elapsed = Date.now() - (turnStartTs[gameId] || Date.now());
+
+    const warnings = inactivityWarnings[gameId] || { 30: false, 60: false, 80: false };
+    if (elapsed >= 30000 && !warnings[30]) {
+      warnings[30] = true;
+      io.to(gameId).emit('game:abandonWarning', { secondsElapsed: 30, message: '60 sec left to move or lose.' });
+    }
+    if (elapsed >= 60000 && !warnings[60]) {
+      warnings[60] = true;
+      io.to(gameId).emit('game:abandonWarning', { secondsElapsed: 60, message: '30 sec left to move or lose.' });
+    }
+    if (elapsed >= 80000 && !warnings[80]) {
+      warnings[80] = true;
+      io.to(gameId).emit('game:abandonWarning', { secondsElapsed: 80, message: '10 sec left to move or lose.' });
+    }
+    inactivityWarnings[gameId] = warnings;
+
+    if (elapsed >= INACTIVITY_FORFEIT_MS) {
+      await applyForfeitOutcome(game, currentPlayer, 'inactivity-timeout');
+      if (!game.moveHistory) game.moveHistory = [];
+      game.moveHistory.push({
+        turn: game.turnCount,
+        event: 'abandonTimeout',
+        color,
+        userId: currentPlayer.id,
+        reason: 'no-move-90s',
+        timestamp: Date.now(),
+      });
+      clearInterval(activeTimers[gameId]);
+      delete activeTimers[gameId];
+      delete inactivityWarnings[gameId];
+      delete drawRequests[gameId];
+      await saveGame(game);
+      saveGameHistory(game);
+      io.to(game.id).emit('game:update', sanitizeGame(game));
+      io.emit('lobby:update');
+      return;
+    }
+
+    const clocks = gameClocks[gameId];
+    if (!clocks || game.timerMode === 'none') return;
 
     let remaining;
     if (game.timerMode === 'total' || game.timerMode === 'chess') {
@@ -1113,10 +1621,12 @@ async function eliminatePlayer(game, color) {
     game.status = 'finished';
     clearInterval(activeTimers[game.id]);
     delete activeTimers[game.id];
+    delete inactivityWarnings[game.id];
+    delete drawRequests[game.id];
     await updatePlayerStats(game);
   } else {
     game.currentTurn = advanceTurn(game);
-    turnStartTs[game.id] = Date.now();
+    resetTurnInactivityWindow(game.id);
     if (game.timerMode === 'perTurn' && gameClocks[game.id]) {
       gameClocks[game.id][game.players[game.currentTurn].color] = game.timerValue * 1000;
     }
@@ -1133,7 +1643,7 @@ async function skipPlayerTurn(game, color) {
   game.moveHistory.push({ turn: game.turnCount, color, event: 'turnSkipped', reason: 'timeout', timestamp: Date.now() });
 
   game.currentTurn = advanceTurn(game);
-  turnStartTs[game.id] = Date.now();
+  resetTurnInactivityWindow(game.id);
   if (game.timerMode === 'perTurn' && gameClocks[game.id]) {
     gameClocks[game.id][game.players[game.currentTurn].color] = game.timerValue * 1000;
   }
@@ -1159,16 +1669,43 @@ function advanceTurn(game) {
 
 async function updatePlayerStats(game) {
   if (game.status !== 'finished') return;
-  const isDraw = game.winner === 'draw';
+  const isDraw = game.winner === 'draw' || !game.winner;
+  const userRows = await knex(TABLES.users).whereIn('id', game.players.map(p => p.id));
+  const byId = new Map(userRows.map(r => [r.id, r]));
 
-  for (const player of game.players) {
+  const ratedPlayers = game.players.map((p) => ({
+    ...p,
+    elo: (byId.get(p.id)?.elo != null) ? byId.get(p.id).elo : 1200,
+  }));
+
+  const winners = isDraw ? [] : ratedPlayers.filter(p => p.color === game.winner);
+
+  for (const player of ratedPlayers) {
+    const row = byId.get(player.id) || {};
+    const opponents = ratedPlayers.filter(o => o.id !== player.id);
+    const opponentAvg = opponents.length
+      ? opponents.reduce((sum, o) => sum + o.elo, 0) / opponents.length
+      : player.elo;
+    const expected = 1 / (1 + Math.pow(10, (opponentAvg - player.elo) / 400));
+
+    let actual = 0.5;
+    if (!isDraw) actual = winners.some(w => w.id === player.id) ? 1 : 0;
+
+    const nextElo = Math.round(player.elo + ELO_K_FACTOR * (actual - expected));
+    const update = {
+      elo: nextElo,
+      games_played: (row.games_played || 0) + 1,
+    };
+
     if (isDraw) {
-      await knex(TABLES.users).where({ id: player.id }).increment({ draws: 1, games_played: 1 });
-    } else if (player.color === game.winner) {
-      await knex(TABLES.users).where({ id: player.id }).increment({ wins: 1, games_played: 1 });
+      update.draws = (row.draws || 0) + 1;
+    } else if (winners.some(w => w.id === player.id)) {
+      update.wins = (row.wins || 0) + 1;
     } else {
-      await knex(TABLES.users).where({ id: player.id }).increment({ losses: 1, games_played: 1 });
+      update.losses = (row.losses || 0) + 1;
     }
+
+    await knex(TABLES.users).where({ id: player.id }).update(update);
   }
 
   const now = Date.now();
@@ -1180,15 +1717,11 @@ async function updatePlayerStats(game) {
 function saveGameHistory(game) {
   try {
     const histFile = path.join(HISTORY_DIR, `${game.id}.json`);
-    fs.writeFileSync(histFile, JSON.stringify({
-      id: game.id,
-      name: game.name,
-      players: game.players,
-      status: game.status,
-      winner: game.winner,
-      moveHistory: game.moveHistory || [],
-      updatedAt: new Date().toISOString(),
-    }, null, 2));
+    const compact = {
+      ...toCompactHistory(game),
+      ua: new Date().toISOString(),
+    };
+    fs.writeFileSync(histFile, JSON.stringify(compact));
   } catch (e) {
     console.error('Failed to save game history:', e.message);
   }
