@@ -71,6 +71,10 @@ Wpawn,,,,,,Bpawn,Bpawn
     return home[0] === r && home[1] === c;
   }
 
+  function isAnyCastleSquare(r, c) {
+    return isCastleSquare(r, c, 'white') || isCastleSquare(r, c, 'black');
+  }
+
   function getEnemyCastle(color) {
     return CASTLE_HOME[getOpponent(color)];
   }
@@ -186,8 +190,22 @@ Wpawn,,,,,,Bpawn,Bpawn
   function isQueenVulnerable(board, queenColor) {
     const queenPos = findPiece(board, queenColor, 'queen');
     if (!queenPos) return false;
-    // Queen is only capturable on her own side of the board.
-    return isOnOwnSide(queenColor, queenPos[0], queenPos[1]);
+    const queen = board[queenPos[0]]?.[queenPos[1]];
+    // Once a queen has crossed to her own side at least once, she stays capturable everywhere.
+    return !!(queen && (queen.crossedHome || isOnOwnSide(queenColor, queenPos[0], queenPos[1])));
+  }
+
+  function canCaptureTarget(board, piece, target, tr, tc) {
+    if (!piece || !target || piece.color === target.color) return false;
+    if (!canPieceCapture(board, piece)) return false;
+
+    // Balance rule: castle-square immunity is removed for all pieces except queens.
+    if (isAnyCastleSquare(tr, tc) && target.type !== 'queen') return true;
+
+    if (target.type === 'rook' || target.type === 'fort') return false;
+    if (target.type === 'pawn' && target.paired) return false;
+    if (target.type === 'queen' && !isQueenVulnerable(board, target.color)) return false;
+    return true;
   }
 
   function canPieceCapture(board, piece) {
@@ -221,10 +239,7 @@ Wpawn,,,,,,Bpawn,Bpawn
     }
 
     if (!opts.capture) return;
-    if (!canPieceCapture(board, piece)) return;
-    if (target.type === 'rook' || target.type === 'fort') return;
-    if (target.type === 'pawn' && target.paired) return;
-    if (target.type === 'queen' && !isQueenVulnerable(board, target.color)) return;
+    if (!canCaptureTarget(board, piece, target, tr, tc)) return;
     moves.push([tr, tc]);
   }
 
@@ -343,9 +358,7 @@ Wpawn,,,,,,Bpawn,Bpawn
         if (!inBounds(tr, tc)) continue;
         const target = board[tr]?.[tc];
         if (!target || target.color === piece.color) continue;
-        if (target.type === 'rook' || target.type === 'fort') continue;
-        if (target.type === 'pawn' && target.paired) continue;
-        if (target.type === 'queen' && !isQueenVulnerable(board, target.color)) continue;
+        if (!canCaptureTarget(board, piece, target, tr, tc)) continue;
         moves.push([tr, tc]);
       }
 
@@ -395,6 +408,25 @@ Wpawn,,,,,,Bpawn,Bpawn
 
     const target = b[tr][tc];
 
+    const applyEnemyCastlePromotion = (movedPiece) => {
+      const enemyCastle = getEnemyCastle(movedPiece.color);
+      if (tr !== enemyCastle[0] || tc !== enemyCastle[1]) return null;
+
+      if (movedPiece.type === 'pawn' && !movedPiece.paired) {
+        b[tr][tc] = { color: movedPiece.color, type: 'knight' };
+        return 'knight';
+      }
+      if ((movedPiece.type === 'pawn' && movedPiece.paired) || movedPiece.type === 'fort') {
+        b[tr][tc] = { color: movedPiece.color, type: 'bishop' };
+        return 'bishop';
+      }
+      if (movedPiece.type === 'rook') {
+        b[tr][tc] = { color: movedPiece.color, type: 'queen' };
+        return 'queen';
+      }
+      return null;
+    };
+
     if (piece.type === 'rook' || piece.type === 'fort') {
       // Push move
       if (target) {
@@ -409,21 +441,24 @@ Wpawn,,,,,,Bpawn,Bpawn
       }
       b[tr][tc] = { ...piece };
       b[fr][fc] = null;
-      return { valid: true, board: b, meta: { pushed: !!target } };
+      const promotedTo = applyEnemyCastlePromotion(b[tr][tc]);
+      return { valid: true, board: b, meta: { pushed: !!target, promotedTo } };
     }
 
     if (piece.type === 'pawn' && piece.paired) {
       // Split pair: one pawn moves, one stays.
       b[fr][fc] = { color: piece.color, type: 'pawn' };
       b[tr][tc] = { color: piece.color, type: 'pawn' };
-      return { valid: true, board: b, meta: { splitPawnPair: true } };
+      const promotedTo = applyEnemyCastlePromotion(b[tr][tc]);
+      return { valid: true, board: b, meta: { splitPawnPair: true, promotedTo } };
     }
 
     if (piece.type === 'pawn' && target && target.type === 'pawn' && target.color === piece.color && !target.paired) {
       // Merge two pawns into a pair.
       b[tr][tc] = { color: piece.color, type: 'pawn', paired: true };
       b[fr][fc] = null;
-      return { valid: true, board: b, meta: { mergedPawnPair: true } };
+      const promotedTo = applyEnemyCastlePromotion(b[tr][tc]);
+      return { valid: true, board: b, meta: { mergedPawnPair: true, promotedTo } };
     }
 
     if (canCoOccupyHome(piece, target, tr, tc)) {
@@ -438,7 +473,8 @@ Wpawn,,,,,,Bpawn,Bpawn
 
     b[tr][tc] = { ...piece };
     b[fr][fc] = null;
-    return { valid: true, board: b, meta: { captured: !!target } };
+    const promotedTo = applyEnemyCastlePromotion(b[tr][tc]);
+    return { valid: true, board: b, meta: { captured: !!target, promotedTo } };
   }
 
   function getSquareRegion(r, c) {
@@ -454,8 +490,13 @@ Wpawn,,,,,,Bpawn,Bpawn
   function updateQueenCrossingFlags(state) {
     for (const color of COLORS) {
       const q = findPiece(state.board, color, 'queen');
-      if (q && isOnOwnSide(color, q[0], q[1])) {
-        state.queenCrossedToOwnSide[color] = true;
+      if (q) {
+        const queen = state.board[q[0]]?.[q[1]];
+        if (!queen) continue;
+        if (queen.crossedHome || isOnOwnSide(color, q[0], q[1])) {
+          queen.crossedHome = true;
+          state.queenCrossedToOwnSide[color] = true;
+        }
       }
     }
   }

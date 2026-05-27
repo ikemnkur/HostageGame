@@ -4,6 +4,9 @@ window.ProfilePage = (() => {
   let viewedUser = null;
   let viewedGames = null;
   let leaderboard = null;
+  let isBlockedByMe = false;
+  let hasBlockedMe = false;
+  let myBlockReason = '';
 
   function getUser() {
     try { return JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user')); } catch { return null; }
@@ -17,6 +20,15 @@ window.ProfilePage = (() => {
       losses: 0,
       draws: 0,
     };
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   async function fetchStats(userId) {
@@ -64,6 +76,40 @@ window.ProfilePage = (() => {
     return data;
   }
 
+  async function fetchBlockStatus(targetUserId, viewerId) {
+    const res = await fetch(`/api/users/${targetUserId}/block-status?viewerId=${encodeURIComponent(viewerId)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Could not load block status.');
+    return {
+      blocked: !!data.blocked,
+      blockedByTarget: !!data.blockedByTarget,
+      reason: String(data.reason || ''),
+      blockedByTargetReason: String(data.blockedByTargetReason || ''),
+    };
+  }
+
+  async function blockUser(targetUserId, requesterId, reason) {
+    const res = await fetch(`/api/users/${targetUserId}/block`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requesterId, reason }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Could not block user.');
+    return data;
+  }
+
+  async function unblockUser(targetUserId, requesterId) {
+    const res = await fetch(`/api/users/${targetUserId}/unblock`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requesterId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Could not unblock user.');
+    return data;
+  }
+
   async function render(targetUserId) {
     const me = getUser();
     if (!me) {
@@ -94,18 +140,27 @@ window.ProfilePage = (() => {
             <div id="user-stats-content"><p>Loading...</p></div>
           </div>
 
-          <div class="stats-section card" id="report-section" style="display:${isSelf ? 'none' : 'block'}">
-            <h3>Report This User</h3>
-            <div id="report-content"></div>
+          <div class="stats-section card moderation-section" id="report-section" style="display:${isSelf ? 'none' : 'block'}">
+            <div class="moderation-block">
+              <h3 class="moderation-title">Block This User</h3>
+              <div id="block-content"></div>
+            </div>
+            <br>
+            <div class="moderation-block">
+              <h3 class="moderation-title">Report This User</h3>
+              <div id="report-content"></div>
+            </div>
           </div>
 
           <div class="stats-section card">
             <h3>Recent Games</h3>
+            <br>
             <div id="recent-games-content"><p>Loading...</p></div>
           </div>
 
           <div class="stats-section card">
             <h3>Leaderboard (Top 20)</h3>
+            <br>
             <div id="leaderboard-content"><p>Loading...</p></div>
           </div>
         </div>
@@ -119,12 +174,79 @@ window.ProfilePage = (() => {
     viewedUser = await fetchStats(userId);
     viewedGames = await fetchUserGames(userId);
     leaderboard = await fetchLeaderboard();
+    if (!isSelf) {
+      try {
+        const blockState = await fetchBlockStatus(userId, me.id);
+        isBlockedByMe = !!blockState.blocked;
+        hasBlockedMe = !!blockState.blockedByTarget;
+        myBlockReason = String(blockState.reason || '');
+      } catch {
+        isBlockedByMe = false;
+        hasBlockedMe = false;
+        myBlockReason = '';
+      }
+    }
 
     renderProfileDetails();
     renderUserStats();
     renderRecentGames();
     renderLeaderboard();
+    renderBlockSection(me, userId, isSelf);
     renderReportSection(me, userId, isSelf);
+  }
+
+  function renderBlockSection(me, targetUserId, isSelf) {
+    if (isSelf) return;
+    const content = document.getElementById('block-content');
+    if (!content) return;
+
+    content.innerHTML = `
+      <div class="moderation-row">
+        <button id="block-toggle-btn" class="btn-secondary">${isBlockedByMe ? 'Unblock User' : 'Block User'}</button>
+        <span id="block-status-text" class="auth-info moderation-status">${isBlockedByMe ? 'You have blocked this user. Their open games are hidden.' : 'Blocking hides each other\'s open game requests.'}</span>
+      </div>
+      <label class="moderation-label" for="block-reason-input">
+        Block reason (optional, visible to admins only)
+        <textarea class="moderation-input" id="block-reason-input" rows="2" maxlength="255" placeholder="Optional context for moderation">${escapeHtml(myBlockReason)}</textarea>
+      </label>
+      <p id="block-reason-counter" class="auth-info moderation-status">${myBlockReason.length}/255</p>
+      ${hasBlockedMe ? '<p class="error-msg moderation-inline-error">This player has also blocked you.</p>' : ''}
+    `;
+
+    const reasonInput = document.getElementById('block-reason-input');
+    const reasonCounter = document.getElementById('block-reason-counter');
+    if (reasonInput && reasonCounter) {
+      reasonInput.addEventListener('input', () => {
+        if (reasonInput.value.length > 255) reasonInput.value = reasonInput.value.slice(0, 255);
+        reasonCounter.textContent = `${reasonInput.value.length}/255`;
+      });
+    }
+
+    const btn = document.getElementById('block-toggle-btn');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        const reason = String(document.getElementById('block-reason-input')?.value || '').trim().slice(0, 255);
+        if (isBlockedByMe) {
+          await unblockUser(targetUserId, me.id);
+          isBlockedByMe = false;
+          myBlockReason = '';
+          Toast.success('User unblocked.', 2000);
+        } else {
+          await blockUser(targetUserId, me.id, reason);
+          isBlockedByMe = true;
+          myBlockReason = reason;
+          Toast.success('User blocked.', 2000);
+        }
+        renderBlockSection(me, targetUserId, false);
+        renderProfileDetails();
+      } catch (error) {
+        Toast.error(error.message || 'Could not update block status.', 3000);
+      } finally {
+        btn.disabled = false;
+      }
+    });
   }
 
   function renderProfileDetails() {
@@ -140,12 +262,15 @@ window.ProfilePage = (() => {
     const country = viewedUser.country || 'N/A';
     const age = viewedUser.age || 'N/A';
     const gender = viewedUser.gender || 'N/A';
+    const blockedBadge = (isBlockedByMe || hasBlockedMe)
+      ? `<span class="blocked-badge" title="Blocking relationship exists">Blocked</span>`
+      : '';
 
     content.innerHTML = `
       <div class="stats-grid">
         <div class="stat-item">
           <div class="stat-label">Username</div>
-          <div class="stat-value">${viewedUser.username || 'Unknown'}</div>
+          <div class="stat-value">${viewedUser.username || 'Unknown'} ${blockedBadge}</div>
         </div>
         <div class="stat-item">
           <div class="stat-label">Country</div>
@@ -216,8 +341,8 @@ window.ProfilePage = (() => {
     if (!content) return;
 
     content.innerHTML = `
-      <form id="report-user-form" class="auth-form">
-        <select id="report-reason">
+      <form id="report-user-form" class="auth-form moderation-form">
+        <select id="report-reason" class="moderation-input">
           <option value="">Select reason</option>
           <option value="abusive-chat">Abusive chat</option>
           <option value="harassment">Harassment</option>
@@ -225,9 +350,9 @@ window.ProfilePage = (() => {
           <option value="abandonment">Habitual abandonment</option>
           <option value="other">Other</option>
         </select>
-        <textarea id="report-details" rows="4" placeholder="Optional details for admin"></textarea>
+        <textarea id="report-details" class="moderation-input" rows="4" placeholder="Optional details for admin"></textarea>
         <p class="error-msg" id="report-error"></p>
-        <button type="submit" id="report-submit-btn">Submit Report</button>
+        <button type="submit" id="report-submit-btn" class="moderation-submit-btn">Submit Report</button>
       </form>
     `;
 
@@ -385,6 +510,9 @@ window.ProfilePage = (() => {
     viewedUser = null;
     viewedGames = null;
     leaderboard = null;
+    isBlockedByMe = false;
+    hasBlockedMe = false;
+    myBlockReason = '';
   }
 
   return { render, cleanup };

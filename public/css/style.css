@@ -203,6 +203,29 @@ input[type="email"]:focus {
 }
 .btn-danger:hover { background: #d13a55; }
 
+.blocked-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  margin-left: 6px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  background: rgba(233, 69, 96, 0.2);
+  color: #ffd8df;
+  border: 1px solid rgba(233, 69, 96, 0.55);
+}
+
+.admin-hidden-cause {
+  font-size: 0.92rem;
+  color: var(--text);
+}
+
+.admin-hidden-reason {
+  color: var(--text-muted);
+}
+
 .game-list { display: flex; flex-direction: column; gap: 12px; }
 .game-card {
   display: flex;
@@ -489,7 +512,7 @@ input[type="email"]:focus {
 
 .practice-move-history-panel {
   padding: 16px;
-  height: 560px;
+  height: auto;
   display: flex;
   flex-direction: column;
   text-align: left;
@@ -672,6 +695,7 @@ input[type="email"]:focus {
 
 .move-log-header {
   display: flex;
+  max-height: 250px;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -692,7 +716,7 @@ input[type="email"]:focus {
 
 .move-log-list {
   overflow-y: auto;
-  max-height: 420px;
+  max-height: 15rem;
   font-size: 0.82rem;
   display: flex;
   flex-direction: column;
@@ -1351,6 +1375,74 @@ input[type="email"]:focus {
   padding: 20px;
 }
 
+.moderation-section {
+  gap: 14px;
+}
+
+.moderation-block {
+  background: var(--bg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+.moderation-title {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
+.moderation-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.moderation-label {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.moderation-input {
+  width: 100%;
+  margin-top: 6px;
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.moderation-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(233, 69, 96, 0.2);
+}
+
+.moderation-status {
+  margin: 0;
+  max-width: none;
+}
+
+.moderation-inline-error {
+  margin: 6px 0 0;
+}
+
+.moderation-form {
+  align-items: stretch;
+  max-width: none;
+  gap: 10px;
+}
+
+.moderation-submit-btn {
+  align-self: flex-start;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -1372,8 +1464,8 @@ input[type="email"]:focus {
 }
 
 .stat-value {
-  font-size: 2rem;
-  font-weight: 700;
+  font-size: 1rem;
+  font-weight: 500;
   color: var(--text);
 }
 
@@ -1671,14 +1763,15 @@ input[type="email"]:focus {
 
 .move-history-panel {
   padding: 16px;
-  height: 600px;
+  height: auto;
   display: flex;
   flex-direction: column;
 }
 
 .move-list {
-  flex: 1;
+  flex: 0 0 auto;
   overflow-y: auto;
+  max-height: 15rem;
   text-align: left;
   margin-top: 12px;
 }

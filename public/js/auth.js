@@ -41,7 +41,7 @@ window.AuthPage = (() => {
             </select>
           </div>
           <input type="text" id="reg-country" name="country" placeholder="Country" autocomplete="country-name" />
-          <input type="text"     id="reg-username" name="username" placeholder="Username (2–50 chars)" autocomplete="username" />
+          <input type="text"     id="reg-username" name="username" placeholder="Username (2–15 chars)" autocomplete="username" />
           <input type="email"    id="reg-email"    name="email"    placeholder="Email address"           autocomplete="email" />
           <input type="password" id="reg-password" name="password" placeholder="Password (min 6 chars)" autocomplete="new-password" />
           <input type="password" id="reg-confirm"  name="confirm"  placeholder="Confirm password"        autocomplete="new-password" />
@@ -193,7 +193,7 @@ window.AuthPage = (() => {
     const errorEl = document.getElementById('register-error');
     errorEl.textContent = '';
 
-    const username  = document.getElementById('reg-username').value.trim();
+    const username  = document.getElementById('reg-username').value.trim().slice(0, 15);
     const email     = document.getElementById('reg-email').value.trim();
     const password  = document.getElementById('reg-password').value;
     const confirm   = document.getElementById('reg-confirm').value;

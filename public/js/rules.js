@@ -34,17 +34,20 @@ window.RulesPage = (() => {
                 <div class="diag-piece king black" style="grid-column: 7; grid-row: 7;">K</div>
               </div>
               <p class="diagram-caption">The queen begins separated. The rescue is complete when the king and queen reunite at the home square/castle square.</p>
+              <img src="/assets/images/Castle-location.png" alt="Hostage chess castle location diagram" class="rules-image rules-castle-image" />
             </div>
           </section>
 
           <section class="rules-section">
             <h2>🎯 Core Goal</h2>
             <div class="rule-callout">
-              <p><strong>Strategic objective:</strong> recover your queen and score the stronger round position by the time the round resolves.</p>
+              <p><strong>Strategic objective:</strong> Save your queen from captivity and place it back in your castle square, OR breach the enemy castle with your king, OR score the stronger position by the time the game ends.</p>
               <ul>
-                <li><strong>White home/castle square:</strong> A8</li>
-                <li><strong>Black home/castle square:</strong> H1</li>
-                <li><strong>Round resolution:</strong> after every Black move, the game evaluates score and outcome.</li>
+                <li><strong>White home/castle square:</strong> A8 (red)</li>
+                <li><strong>Black home/castle square:</strong> H1 (blue)</li>
+                <li><strong>Rescue condition:</strong> your queen is on your home square.</li>
+                <li><strong>Breach condition:</strong> your king is on the enemy home square.</li>
+                <li><strong>Round resolution:</strong> Usually after every Black move, the game engine evaluates score and game outcome.</li>
               </ul>
             </div>
           </section>
@@ -81,14 +84,14 @@ Wpawn,,,,,,Bpawn,Bpawn<br>
                 <h3>Queen</h3>
                 <div class="piece-line"><span class="piece-chip white queen-chip">Q</span><span>Moves 1 square like a king.</span></div>
               
-                <p>Queen can only capture on her own home side (it arms-up on its own side), and can only be captured on her own home side ( when it is "armed"). On the enemy side and on the neutral diagonal (A1, B2, C3, D4, E5, F6, G7, H8), she is unarmed and cannot be captured until she crosses over to her home side.</p>
+                <p>Queen can only capture on her own home side. She is initially uncapturable on enemy/neutral squares, but once she has crossed onto her own side at least once, she becomes capturable from then on regardless of where she stands.</p>
               </div>
 
               <div class="move-card move-card-compact">
                 <h3>Pawn</h3>
                 <div class="piece-line"><span class="piece-chip white">P</span><span>Moves like a rook, but only 1 square.</span></div>
                
-                <p>Pawn movement is orthogonal by 1 square. Pawn captures are diagonal by 1 square. Pairing pawns can form forts. If a pawn breaches the enemy castle it can promote into a knight, if a fort is formed in the enemy castle square it promotes to a bishop.</p>
+                <p>Pawn movement is orthogonal by 1 square. Pawn captures are diagonal by 1 square. Pairing pawns can form forts. A pawn that breaches the enemy castle square auto-promotes to a knight. A paired pawn (fort state) on the enemy castle square promotes to a bishop.</p>
               </div>
 
               <div class="move-card move-card-compact">
@@ -100,9 +103,9 @@ Wpawn,,,,,,Bpawn,Bpawn<br>
                 <div class="piece-example example-row push-example">
                   <span class="push-target">□</span><span class="arrow">→</span><span class="blocker">R</span><span class="arrow">→</span><span class="example-start">X</span>
                 </div>
-                <p>Rooks cannot capture and cannot be captured. A blocked move can push one piece forward if space remains in the direction of travel.</p>
+                <p>Rooks cannot capture and are normally uncapturable. A blocked move can push the blocking piece forward one square if space remains in the direction of travel.</p>
                 <p> Rooks can demote into forts, select the demote button.</p>
-                 <p> If the rook breaches the enemy castle it promotes (forced) into a queen, if a fort is formed in the enemy castle square it promotes to a bishop.</p>
+                 <p> If the rook breaches the enemy castle it auto-promotes to a queen.</p>
                
               </div>
 
@@ -110,9 +113,10 @@ Wpawn,,,,,,Bpawn,Bpawn<br>
                 <h3>Fort</h3>
                 <div class="piece-line"><span class="piece-chip black">F</span><span>Static Piece (no movement)</span></div>
                 
-                <p> Two adjacent pawns of the same color can move to the same square to form a fort, which is static and cannot move nor can it be captured like rooks. Form can revert by selecting a free square to demote the fort back into individual pawns.</p>
+                <p> Two adjacent pawns of the same color can move to the same square to form a fort, which is static and cannot move and is normally uncapturable like rooks. Forts can revert by selecting a free square to demote the fort back into individual pawns.</p>
                 <p>Forts can be used to create strategic barriers and control key squares, but they can also be a liability if they block your own rescue routes or piece coordination.</p>
                 <p>If a king is adjacent to a fort, the fort can elect to promote into a rook on the king's turn, select the promote button. Doing so gains the ability to move and push but loses the static defense. This can be a powerful tactical option for breaking through enemy lines or creating dynamic threats, but it also exposes the fort to capture and removes its ability to serve as a protective barrier for your king.</p>
+                <p>Balance rule: any piece standing on either castle square can be captured, including rooks and forts/paired pawns.</p>
                
               </div>
 
@@ -146,15 +150,15 @@ Wpawn,,,,,,Bpawn,Bpawn<br>
 
           <section class="rules-section">
             <h2>🏠 Home / Castle Square</h2>
-            <p>Each side has exactly one home/castle square. Returning royals to home is central to scoring and end-state outcomes.</p>
+            <p>Each side has exactly one home/castle square. Returning royals to home is central to scoring and the end-game outcome.</p>
             <div class="home-grid">
               <div class="home-box white-home">
                 <strong>White home</strong>
-                <span>A8</span>
+                <span>A8 (red tinted square)</span>
               </div>
               <div class="home-box black-home">
                 <strong>Black home</strong>
-                <span>H1</span>
+                <span>H1 (blue tinted square)</span>
               </div>
             </div>
           </section>

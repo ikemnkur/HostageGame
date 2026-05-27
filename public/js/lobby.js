@@ -5,17 +5,45 @@ window.LobbyPage = (() => {
   let lobbyUpdateHandler = null;
   let userStatsSummary = null;
   let userSearchTimer = null;
+  const autoEnterTimers = {};
+  const rejectedGameIds = new Set();
+  let hiddenDiagnostics = [];
 
   function getUser() {
     try { return JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user')); } catch { return null; }
   }
 
+  function getAdminApiKey() {
+    try { return String(localStorage.getItem('hostage_admin_api_key') || '').trim(); } catch { return ''; }
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   async function fetchGames() {
     try {
-      const res = await fetch('/api/games');
+      const user = getUser();
+      const adminApiKey = getAdminApiKey();
+      const params = new URLSearchParams();
+      if (user?.id) params.set('userId', user.id);
+      if (adminApiKey) params.set('includeHiddenDiagnostics', '1');
+      const qs = params.toString() ? `?${params.toString()}` : '';
+      const headers = adminApiKey ? { 'x-admin-key': adminApiKey } : undefined;
+      const res = await fetch(`/api/games${qs}`, headers ? { headers } : undefined);
       const data = await res.json();
-      return data.games || [];
-    } catch { return []; }
+      return {
+        games: data.games || [],
+        hiddenDiagnostics: data.hiddenDiagnostics || [],
+      };
+    } catch {
+      return { games: [], hiddenDiagnostics: [] };
+    }
   }
 
   async function fetchUserStats(userId) {
@@ -38,6 +66,23 @@ window.LobbyPage = (() => {
     } catch {
       return [];
     }
+  }
+
+  async function fetchBlockMap(targetUserIds, viewerId) {
+    const map = new Map();
+    if (!viewerId || !Array.isArray(targetUserIds) || targetUserIds.length === 0) return map;
+
+    await Promise.all(targetUserIds.map(async (targetId) => {
+      try {
+        const res = await fetch(`/api/users/${encodeURIComponent(targetId)}/block-status?viewerId=${encodeURIComponent(viewerId)}`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) return;
+        map.set(targetId, { blocked: !!data.blocked, blockedByTarget: !!data.blockedByTarget });
+      } catch {
+        // Ignore per-user status failures.
+      }
+    }));
+    return map;
   }
 
   function render() {
@@ -108,6 +153,8 @@ window.LobbyPage = (() => {
         <div id="game-list" class="game-list">
           <div class="empty-lobby">Loading games…</div>
         </div>
+
+        <div id="admin-hidden-diagnostics" class="card" style="display:none; margin-top:16px;"></div>
 
         <div class="card" style="margin-top:16px; padding:12px;">
           <h3 style="margin-bottom:8px;">Find Player Profiles</h3>
@@ -195,6 +242,7 @@ window.LobbyPage = (() => {
   async function runUserSearch(raw) {
     const q = String(raw || '').trim();
     const container = document.getElementById('user-search-results');
+    const user = getUser();
     if (!container) return;
 
     if (q.length < 2) {
@@ -203,6 +251,7 @@ window.LobbyPage = (() => {
     }
 
     const users = await searchUsers(q);
+    const blockMap = await fetchBlockMap(users.map((u) => u.id), user?.id);
     if (!users.length) {
       container.innerHTML = '<p class="empty-message">No users found.</p>';
       return;
@@ -210,7 +259,15 @@ window.LobbyPage = (() => {
 
     container.innerHTML = users.map((u) => `
       <button class="btn-secondary profile-result-btn" data-user-id="${u.id}" style="display:flex;justify-content:space-between;align-items:center;width:100%;margin-bottom:6px;">
-        <span>${u.username}${u.country ? ` · ${u.country}` : ''}</span>
+        <span>
+          ${u.username}${u.country ? ` · ${u.country}` : ''}
+          ${(() => {
+            const relation = blockMap.get(u.id);
+            return relation && (relation.blocked || relation.blockedByTarget)
+              ? '<span class="blocked-badge" style="margin-left:8px;">Blocked</span>'
+              : '';
+          })()}
+        </span>
         <strong>ELO ${u.elo}</strong>
       </button>
     `).join('');
@@ -242,9 +299,13 @@ window.LobbyPage = (() => {
   }
 
   async function loadGames() {
-    const games = await fetchGames();
+    const payload = await fetchGames();
+    const games = payload.games || [];
+    hiddenDiagnostics = payload.hiddenDiagnostics || [];
     const container = document.getElementById('game-list');
     if (!container) return;
+
+    renderAdminHiddenDiagnostics();
 
     if (games.length === 0) {
       container.innerHTML = '<div class="empty-lobby">No games yet. Create one to get started!</div>';
@@ -273,6 +334,8 @@ window.LobbyPage = (() => {
       const canJoin   = g.status === 'waiting' && g.playerCount < maxP && !isJoined;
       const canEnter  = isJoined && g.status === 'playing';
       const canWatch  = !isJoined && g.status === 'playing';
+      const isCreator = g.createdById && g.createdById === user.id;
+      const opponent = g.players.find((p) => p.id !== user.id) || null;
 
       let timerBadge = '';
       if (g.timerMode === 'total') timerBadge = `<span class="timer-badge">${g.timerValue}m total</span>`;
@@ -289,7 +352,10 @@ window.LobbyPage = (() => {
       if (canJoin) {
         actionBtn = `<button class="join-btn" data-id="${g.id}">Join</button>`;
       } else if (canEnter) {
-        actionBtn = `<button class="enter-btn" data-id="${g.id}">Enter Game</button>`;
+        const rejectBtn = (isCreator && opponent)
+          ? `<button class="reject-btn btn-secondary" data-id="${g.id}" data-opp-name="${opponent.username}" data-opp-elo="${opponent.elo || 1200}">Reject (${opponent.username} ${opponent.elo || 1200})</button>`
+          : '';
+        actionBtn = `<div style="display:flex; gap:8px; flex-wrap:wrap;"><button class="enter-btn" data-id="${g.id}">Enter Game</button>${rejectBtn}</div>`;
       } else if (isJoined && g.status === 'waiting') {
         actionBtn = `<button class="enter-btn" data-id="${g.id}" disabled>Waiting…</button>`;
       } else if (canWatch) {
@@ -300,7 +366,8 @@ window.LobbyPage = (() => {
         <div class="card game-card ${g.status === 'playing' ? 'game-card-active' : ''}">
           <div class="game-info">
             <h3>${g.name} ${timerBadge}</h3>
-            <p class="player-count">${statusLabel} · by ${creator}</p>
+            <p class="player-count">${statusLabel} · by <button class="btn-sm creator-profile-btn" data-user-id="${g.createdById || ''}">${creator}</button></p>
+            
           </div>
           <div class="player-dots">${dots.join('')}</div>
           ${actionBtn}
@@ -332,6 +399,114 @@ window.LobbyPage = (() => {
     container.querySelectorAll('.watch-btn').forEach(btn => {
       btn.addEventListener('click', () => window.App.navigate(`/spectate/${btn.dataset.id}`));
     });
+    container.querySelectorAll('.reject-btn').forEach(btn => {
+      btn.addEventListener('click', () => rejectOpponent(btn.dataset.id, btn.dataset.oppName, btn.dataset.oppElo));
+    });
+    container.querySelectorAll('.creator-profile-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (!btn.dataset.userId) return;
+        window.App.navigate(`/profile/${btn.dataset.userId}`);
+      });
+    });
+
+    const enterableIds = new Set(active
+      .filter((g) => g.status === 'playing' && g.players.some((p) => p.id === user.id))
+      .map((g) => g.id));
+    Object.keys(autoEnterTimers).forEach((id) => {
+      if (!enterableIds.has(id)) {
+        clearTimeout(autoEnterTimers[id]);
+        delete autoEnterTimers[id];
+        rejectedGameIds.delete(id);
+      }
+    });
+
+    active.forEach((g) => {
+      const canEnter = g.status === 'playing' && g.players.some((p) => p.id === user.id);
+      if (!canEnter || rejectedGameIds.has(g.id) || autoEnterTimers[g.id]) return;
+      autoEnterTimers[g.id] = setTimeout(() => {
+        delete autoEnterTimers[g.id];
+        if (rejectedGameIds.has(g.id)) return;
+        const btn = document.querySelector(`.enter-btn[data-id="${g.id}"]`);
+        if (btn && !btn.disabled) btn.click();
+      }, 10000);
+    });
+  }
+
+  function renderAdminHiddenDiagnostics() {
+    const container = document.getElementById('admin-hidden-diagnostics');
+    if (!container) return;
+
+    const adminApiKey = getAdminApiKey();
+    if (!adminApiKey) {
+      container.style.display = 'none';
+      container.innerHTML = '';
+      return;
+    }
+
+    container.style.display = 'block';
+    if (!hiddenDiagnostics.length) {
+      container.innerHTML = `
+        <h3 style="margin-bottom:8px;">Admin Hidden-State Diagnostics</h3>
+        <p class="empty-message">No games are currently hidden from this viewer by block rules.</p>
+      `;
+      return;
+    }
+
+    const cards = hiddenDiagnostics.map((entry) => {
+      const causes = Array.isArray(entry.causes) ? entry.causes : [];
+      const causeHtml = causes.map((cause) => {
+        const blocker = escapeHtml(cause.blockerUsername || cause.blockerId || 'Unknown');
+        const blocked = escapeHtml(cause.blockedUsername || cause.blockedId || 'Unknown');
+        const reason = String(cause.reason || '').trim();
+        return `
+          <div class="admin-hidden-cause">
+            <strong>${blocker}</strong> blocked <strong>${blocked}</strong>${reason ? ` <span class="admin-hidden-reason">Reason: ${escapeHtml(reason)}</span>` : ' <span class="admin-hidden-reason">Reason: (none)</span>'}
+          </div>
+        `;
+      }).join('');
+      return `
+        <div class="game-item" style="border-left:4px solid #e94560; margin-bottom:8px;">
+          <div class="game-info" style="width:100%;">
+            <div class="game-name">${escapeHtml(entry.gameName || 'Game')} (${escapeHtml(entry.gameId || '')})</div>
+            <div class="game-meta">Creator: ${escapeHtml(entry.creatorUsername || entry.creatorId || 'Unknown')}</div>
+            <div style="margin-top:8px; display:flex; flex-direction:column; gap:6px;">${causeHtml || '<span class="admin-hidden-reason">No cause details.</span>'}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    container.innerHTML = `
+      <h3 style="margin-bottom:8px;">Admin Hidden-State Diagnostics</h3>
+      <p class="auth-info" style="margin-bottom:10px;">Shows which blocks hid open game requests for the current viewer.</p>
+      ${cards}
+    `;
+  }
+
+  async function rejectOpponent(gameId, opponentName, opponentElo) {
+    const user = getUser();
+    if (!user) return;
+    if (!confirm(`Reject ${opponentName} (${opponentElo}) before game starts?`)) return;
+    try {
+      const res = await fetch(`/api/games/${gameId}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        Toast.error(data.error || 'Could not reject opponent.', 3000);
+        return;
+      }
+      rejectedGameIds.add(gameId);
+      if (autoEnterTimers[gameId]) {
+        clearTimeout(autoEnterTimers[gameId]);
+        delete autoEnterTimers[gameId];
+      }
+      Toast.success(`Rejected ${opponentName}.`, 2500);
+      loadGames();
+    } catch {
+      Toast.error('Could not reject opponent.', 3000);
+    }
   }
 
   async function createGame() {
@@ -391,6 +566,12 @@ window.LobbyPage = (() => {
   function cleanup() {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     if (userSearchTimer) { clearTimeout(userSearchTimer); userSearchTimer = null; }
+    Object.keys(autoEnterTimers).forEach((id) => {
+      clearTimeout(autoEnterTimers[id]);
+      delete autoEnterTimers[id];
+    });
+    rejectedGameIds.clear();
+    hiddenDiagnostics = [];
     if (lobbyUpdateHandler) SocketClient.off('lobby:update', lobbyUpdateHandler);
     lobbyUpdateHandler = null;
   }

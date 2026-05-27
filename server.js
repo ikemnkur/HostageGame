@@ -73,9 +73,10 @@ const PRE_GAME_STATS_DELAY_MS = 4500;
 const ELO_K_FACTOR = 32;
 const INACTIVITY_FORFEIT_MS = 90000;
 const ABORT_NULL_MOVE_LIMIT = 7;
-const ABORT_NULL_ELO_PENALTY = -3;
+const ABORT_NULL_ELO_PENALTY = -1;
 const ABORT_FORFEIT_WIN_ELO = 3;
-const ABORT_FORFEIT_LOSS_ELO = -20;
+const ABORT_FORFEIT_LOSS_ELO = -3;
+const BLOCK_REASON_MAX_LEN = 255;
 
 const TABLES = {
   accounts: 'account',
@@ -96,6 +97,7 @@ function parseJSON(val) {
 function rowToUser(row) {
   if (!row) return null;
   const sportsmanshipRatings = parseRatingsCsv(row.sportsmanship_ratings);
+  const blockedUsers = parseBlockedUsers(row.BlockedUsers || row.blocked_users || '');
   const sportsmanshipAverage = sportsmanshipRatings.length
     ? Number((sportsmanshipRatings.reduce((sum, n) => sum + n, 0) / sportsmanshipRatings.length).toFixed(2))
     : null;
@@ -117,6 +119,7 @@ function rowToUser(row) {
       sportsmanshipRatings,
       sportsmanshipAverage,
     },
+    blockedUsersCount: blockedUsers.length,
     createdAt: row.created_at,
   };
 }
@@ -127,6 +130,101 @@ function parseRatingsCsv(csv) {
     .split(',')
     .map((n) => Number.parseInt(n.trim(), 10))
     .filter((n) => Number.isInteger(n) && n >= 0 && n <= 5);
+}
+
+function parseBlockedUsers(value) {
+  return parseBlockedEntries(value).map((entry) => entry.id);
+}
+
+function serializeBlockedUsers(list) {
+  const entries = [];
+  for (const item of (list || [])) {
+    if (item && typeof item === 'object') {
+      const id = String(item.id || '').trim();
+      if (!id) continue;
+      entries.push({ id, reason: sanitizeBlockReason(item.reason) });
+      continue;
+    }
+    const id = String(item || '').trim();
+    if (!id) continue;
+    entries.push({ id, reason: '' });
+  }
+
+  const deduped = [];
+  const byId = new Map();
+  entries.forEach((entry) => {
+    byId.set(entry.id, entry.reason || byId.get(entry.id) || '');
+  });
+  for (const [id, reason] of byId.entries()) {
+    deduped.push({ id, reason: sanitizeBlockReason(reason) });
+  }
+  return JSON.stringify(deduped);
+}
+
+function sanitizeBlockReason(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim().slice(0, BLOCK_REASON_MAX_LEN);
+}
+
+function parseBlockedEntries(value) {
+  if (!value) return [];
+  const normalizeEntry = (entry) => {
+    if (entry && typeof entry === 'object') {
+      const id = String(entry.id || '').trim();
+      if (!id) return null;
+      return { id, reason: sanitizeBlockReason(entry.reason) };
+    }
+    const id = String(entry || '').trim();
+    if (!id) return null;
+    return { id, reason: '' };
+  };
+
+  let rawEntries = null;
+  if (Array.isArray(value)) {
+    rawEntries = value;
+  } else {
+    const raw = String(value).trim();
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) rawEntries = parsed;
+    } catch {
+      // Fall back to CSV format below.
+    }
+    if (!rawEntries) rawEntries = raw.split(',');
+  }
+
+  const deduped = [];
+  const byId = new Map();
+  rawEntries.forEach((entry) => {
+    const normalized = normalizeEntry(entry);
+    if (!normalized) return;
+    const prevReason = byId.get(normalized.id) || '';
+    byId.set(normalized.id, normalized.reason || prevReason);
+  });
+  for (const [id, reason] of byId.entries()) {
+    deduped.push({ id, reason: sanitizeBlockReason(reason) });
+  }
+  return deduped;
+}
+
+function upsertBlockedEntry(entries, targetUserId, reason = '') {
+  const next = parseBlockedEntries(entries);
+  const targetId = String(targetUserId || '').trim();
+  if (!targetId) return next;
+  const cleanReason = sanitizeBlockReason(reason);
+  const idx = next.findIndex((entry) => entry.id === targetId);
+  if (idx >= 0) {
+    next[idx].reason = cleanReason;
+  } else {
+    next.push({ id: targetId, reason: cleanReason });
+  }
+  return next;
+}
+
+function removeBlockedEntry(entries, targetUserId) {
+  const targetId = String(targetUserId || '').trim();
+  return parseBlockedEntries(entries).filter((entry) => entry.id !== targetId);
 }
 
 function sortObjectDeep(value) {
@@ -355,6 +453,7 @@ async function ensureHostageChessUser(accountRow, profileInput = {}) {
       wins: 0, losses: 0, draws: 0, games_played: 0,
       elo: 1200,
       sportsmanship_ratings: '',
+      BlockedUsers: '',
       age: profile.age,
       gender: profile.gender,
       country: profile.country,
@@ -674,19 +773,96 @@ app.post('/api/auth/logout', async (req, res) => {
 });
 
 // List games
-app.get('/api/games', async (_req, res) => {
+app.get('/api/games', async (req, res) => {
   try {
+    const viewerId = String(req.query.userId || '').trim();
+    const includeHiddenDiagnostics = String(req.query.includeHiddenDiagnostics || '') === '1';
+    let includeDiagnostics = false;
+    const expectedAdminKey = process.env.ADMIN_API_KEY || '';
+    if (includeHiddenDiagnostics && expectedAdminKey) {
+      const suppliedKey = req.headers['x-admin-key'];
+      includeDiagnostics = suppliedKey && suppliedKey === expectedAdminKey;
+    }
+
+    let viewerBlocked = [];
+    let viewerBlockedEntries = [];
+    let viewerUsername = null;
+    if (viewerId) {
+      const viewerRow = await knex(TABLES.users).where({ id: viewerId }).first();
+      viewerBlockedEntries = parseBlockedEntries(viewerRow?.BlockedUsers || viewerRow?.blocked_users || '');
+      viewerBlocked = viewerBlockedEntries.map((entry) => entry.id);
+      viewerUsername = viewerRow?.username || null;
+    }
+
     const rows = await knex(TABLES.games).whereNot({ status: 'finished' });
+    const parsedGames = rows.map((r) => rowToGame(r));
+    const allPlayerIds = Array.from(new Set(parsedGames.flatMap((g) => (g.players || []).map((p) => p.id).filter(Boolean))));
+    const playerRows = allPlayerIds.length
+      ? await knex(TABLES.users).select('id', 'username', 'elo', 'BlockedUsers').whereIn('id', allPlayerIds)
+      : [];
+    const eloById = new Map(playerRows.map((r) => [r.id, r.elo != null ? r.elo : 1200]));
+    const blockedEntriesById = new Map(playerRows.map((r) => [r.id, parseBlockedEntries(r.BlockedUsers || r.blocked_users || '')]));
+    const blockedById = new Map(playerRows.map((r) => [r.id, parseBlockedUsers(r.BlockedUsers || r.blocked_users || '')]));
+    const usernameById = new Map(playerRows.map((r) => [r.id, r.username || null]));
+    if (viewerId && viewerUsername) usernameById.set(viewerId, viewerUsername);
+
+    const hiddenDiagnostics = [];
+
     const games = rows.map(r => {
       const g = rowToGame(r);
       const creator = (g.players && g.players[0]) ? g.players[0] : null;
+      const creatorId = creator ? creator.id : null;
+
+      if (viewerId && creatorId) {
+        const creatorBlocked = blockedById.get(creatorId) || [];
+        const viewerBlockedCreator = viewerBlocked.includes(creatorId);
+        const creatorBlockedViewer = creatorBlocked.includes(viewerId);
+        const hidden = viewerBlockedCreator || creatorBlockedViewer;
+        if (hidden) {
+          if (includeDiagnostics) {
+            const viewerEntry = viewerBlockedEntries.find((entry) => entry.id === creatorId) || null;
+            const creatorEntries = blockedEntriesById.get(creatorId) || [];
+            const creatorEntry = creatorEntries.find((entry) => entry.id === viewerId) || null;
+            const causes = [];
+            if (viewerBlockedCreator) {
+              causes.push({
+                direction: 'viewer_blocked_creator',
+                blockerId: viewerId,
+                blockerUsername: usernameById.get(viewerId) || viewerId,
+                blockedId: creatorId,
+                blockedUsername: usernameById.get(creatorId) || creator?.username || creatorId,
+                reason: viewerEntry?.reason || '',
+              });
+            }
+            if (creatorBlockedViewer) {
+              causes.push({
+                direction: 'creator_blocked_viewer',
+                blockerId: creatorId,
+                blockerUsername: usernameById.get(creatorId) || creator?.username || creatorId,
+                blockedId: viewerId,
+                blockedUsername: usernameById.get(viewerId) || viewerId,
+                reason: creatorEntry?.reason || '',
+              });
+            }
+            hiddenDiagnostics.push({
+              gameId: g.id,
+              gameName: g.name,
+              creatorId,
+              creatorUsername: creator?.username || usernameById.get(creatorId) || creatorId,
+              causes,
+            });
+          }
+          return null;
+        }
+      }
+
       return {
         id: g.id,
         name: g.name,
         status: g.status,
         playerCount: g.players.length,
         maxPlayers: g.maxPlayers,
-        players: g.players.map(p => ({ username: p.username, color: p.color })),
+        players: g.players.map(p => ({ id: p.id, username: p.username, color: p.color, elo: eloById.get(p.id) || 1200 })),
         createdBy: creator ? creator.username : null,
         createdById: creator ? creator.id : null,
         timerMode: g.timerMode,
@@ -694,7 +870,7 @@ app.get('/api/games', async (_req, res) => {
         timeControl: g.timeControl || null,
       };
     });
-    res.json({ games });
+    res.json({ games: games.filter(Boolean), hiddenDiagnostics: includeDiagnostics ? hiddenDiagnostics : [] });
   } catch (e) {
     console.error('[games:list]', e.message);
     res.status(500).json({ error: 'Server error.' });
@@ -778,6 +954,16 @@ app.post('/api/games/:gameId/join', async (req, res) => {
     if (!userRow) return res.status(400).json({ error: 'User not found.' });
     const user = rowToUser(userRow);
 
+    const creator = game.players[0];
+    if (creator?.id) {
+      const creatorRow = await knex(TABLES.users).where({ id: creator.id }).first();
+      const creatorBlocked = parseBlockedUsers(creatorRow?.BlockedUsers || creatorRow?.blocked_users || '');
+      const joinerBlocked = parseBlockedUsers(userRow?.BlockedUsers || userRow?.blocked_users || '');
+      if (creatorBlocked.includes(user.id) || joinerBlocked.includes(creator.id)) {
+        return res.status(403).json({ error: 'You cannot join this game due to block settings.' });
+      }
+    }
+
     const COLORS = ['white', 'black'];
     const takenColors = game.players.map(p => p.color);
     const color = COLORS.find(c => !takenColors.includes(c));
@@ -799,6 +985,52 @@ app.post('/api/games/:gameId/join', async (req, res) => {
     res.json({ game: sanitizeGame(game) });
   } catch (e) {
     console.error('[games:join]', e.message);
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+// Creator can reject opponent before first move/clock start grace period.
+app.post('/api/games/:gameId/reject', async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const game = await getGame(req.params.gameId);
+    if (!game) return res.status(404).json({ error: 'Game not found.' });
+
+    const creator = game.players?.[0];
+    if (!creator || creator.id !== userId) return res.status(403).json({ error: 'Only game creator can reject.' });
+    if (game.status !== 'playing') return res.status(400).json({ error: 'Game is not in pre-start state.' });
+    if ((game.moveHistory || []).length > 0) return res.status(400).json({ error: 'Cannot reject after moves have started.' });
+    if (!game.timerStartsAt || Date.now() > game.timerStartsAt + 1000) {
+      return res.status(400).json({ error: 'Reject window has expired.' });
+    }
+
+    const opponent = game.players.find((p) => p.id !== userId);
+    if (!opponent) return res.status(400).json({ error: 'No opponent to reject.' });
+
+    game.players = [creator];
+    game.status = 'waiting';
+    game.currentTurn = 0;
+    game.turnCount = 0;
+    game.board = createEmptyBoard();
+    game.timerStartsAt = null;
+    game.moveHistory = [];
+    game.eliminatedColors = [];
+    game.winner = null;
+    game.result = null;
+    game.points = { white: 0, black: 0 };
+    game.queenCrossedToOwnSide = { white: false, black: false };
+
+    clearInterval(activeTimers[game.id]);
+    delete activeTimers[game.id];
+    delete inactivityWarnings[game.id];
+    delete drawRequests[game.id];
+
+    await saveGame(game);
+    io.to(game.id).emit('game:update', sanitizeGame(game));
+    io.emit('lobby:update');
+    res.json({ success: true, rejectedUserId: opponent.id, game: sanitizeGame(game) });
+  } catch (e) {
+    console.error('[games:reject]', e.message);
     res.status(500).json({ error: 'Server error.' });
   }
 });
@@ -1092,6 +1324,80 @@ app.get('/api/users/search', async (req, res) => {
     res.json({ users });
   } catch (e) {
     console.error('[users:search]', e.message);
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+app.get('/api/users/:userId/block-status', async (req, res) => {
+  try {
+    const targetUserId = req.params.userId;
+    const viewerId = String(req.query.viewerId || '').trim();
+    if (!viewerId) return res.status(400).json({ error: 'viewerId is required.' });
+
+    const [viewer, target] = await Promise.all([
+      knex(TABLES.users).where({ id: viewerId }).first(),
+      knex(TABLES.users).where({ id: targetUserId }).first(),
+    ]);
+    if (!viewer) return res.status(404).json({ error: 'Viewer not found.' });
+    if (!target) return res.status(404).json({ error: 'Target user not found.' });
+
+    const viewerEntries = parseBlockedEntries(viewer.BlockedUsers || viewer.blocked_users || '');
+    const targetEntries = parseBlockedEntries(target.BlockedUsers || target.blocked_users || '');
+    const viewerEntry = viewerEntries.find((entry) => entry.id === targetUserId) || null;
+    const targetEntry = targetEntries.find((entry) => entry.id === viewerId) || null;
+
+    res.json({
+      blocked: !!viewerEntry,
+      blockedByTarget: !!targetEntry,
+      reason: viewerEntry?.reason || '',
+      blockedByTargetReason: targetEntry?.reason || '',
+    });
+  } catch (e) {
+    console.error('[users:block-status]', e.message);
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+app.post('/api/users/:userId/block', async (req, res) => {
+  try {
+    const targetUserId = req.params.userId;
+    const requesterId = String(req.body.requesterId || '').trim();
+    const reason = sanitizeBlockReason(req.body.reason || '');
+    if (!requesterId) return res.status(400).json({ error: 'requesterId is required.' });
+    if (targetUserId === requesterId) return res.status(400).json({ error: 'You cannot block yourself.' });
+
+    const requester = await knex(TABLES.users).where({ id: requesterId }).first();
+    if (!requester) return res.status(404).json({ error: 'Requester not found.' });
+    const target = await knex(TABLES.users).where({ id: targetUserId }).first();
+    if (!target) return res.status(404).json({ error: 'Target user not found.' });
+
+    const blockedEntries = upsertBlockedEntry(requester.BlockedUsers || requester.blocked_users || '', targetUserId, reason);
+    await knex(TABLES.users).where({ id: requesterId }).update({
+      BlockedUsers: serializeBlockedUsers(blockedEntries),
+    });
+    res.json({ success: true, blocked: true, reason });
+  } catch (e) {
+    console.error('[users:block]', e.message);
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+app.post('/api/users/:userId/unblock', async (req, res) => {
+  try {
+    const targetUserId = req.params.userId;
+    const requesterId = String(req.body.requesterId || '').trim();
+    if (!requesterId) return res.status(400).json({ error: 'requesterId is required.' });
+
+    const requester = await knex(TABLES.users).where({ id: requesterId }).first();
+    if (!requester) return res.status(404).json({ error: 'Requester not found.' });
+
+    const next = removeBlockedEntry(requester.BlockedUsers || requester.blocked_users || '', targetUserId);
+    await knex(TABLES.users).where({ id: requesterId }).update({
+      BlockedUsers: serializeBlockedUsers(next),
+    });
+    res.json({ success: true, blocked: false });
+  } catch (e) {
+    console.error('[users:unblock]', e.message);
     res.status(500).json({ error: 'Server error.' });
   }
 });

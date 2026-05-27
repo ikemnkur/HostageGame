@@ -74,6 +74,7 @@ window.PracticePage = (() => {
             <div class="card practice-move-history-panel">
               <div class="move-log-header">
                 <h3>Move History</h3>
+                <br>
                 <div class="move-log-actions">
                   <button id="practice-download-btn" class="btn-sm" title="Download practice history">⬇ Download</button>
                   <button id="practice-copy-json-btn" class="btn-sm" title="Copy JSON">📄 Copy JSON</button>
