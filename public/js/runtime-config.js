@@ -21,10 +21,10 @@ window.RuntimeConfig = (() => {
       };
     }
 
-    if (host === 'hostagechess.boardgamez.org') {
+    if (host === 'hostagechess.boredgamez.org') {
       return {
-        apiBaseUrl: 'https://server.hostagechess.boardgamez.org',
-        socketUrl: 'https://server.hostagechess.boardgamez.org',
+        apiBaseUrl: 'https://server.hostagechess.boredgamez.org',
+        socketUrl: 'https://server.hostagechess.boredgamez.org',
         socketPath: '/socket.io',
       };
     }
