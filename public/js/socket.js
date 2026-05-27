@@ -22,8 +22,8 @@ window.SocketClient = (() => {
     getSocket().emit('game:join', gameId);
   }
 
-  function sendMove(gameId, userId, from, to) {
-    getSocket().emit('game:move', { gameId, userId, from, to });
+  function sendMove(gameId, userId, from, to, options = {}) {
+    getSocket().emit('game:move', { gameId, userId, from, to, options });
   }
 
   function requestResign(gameId, userId) {

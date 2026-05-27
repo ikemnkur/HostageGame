@@ -1,14 +1,14 @@
 /**
- * Migration: create linked_users and linked_games tables
+ * Migration: create HostageChess_users and HostageChess_games tables
  *
- * linked_users  — game-specific user auth & stats (separate from the main
+ * HostageChess_users  — game-specific user auth & stats (separate from the main
  *                 videoscrambler userData table).
- * linked_games  — active and finished game records with JSON columns for
+ * HostageChess_games  — active and finished game records with JSON columns for
  *                 complex nested state (board, players, move history, etc.).
  */
 
 exports.up = async function (knex) {
-  await knex.schema.createTable('linked_users', (t) => {
+  await knex.schema.createTable('HostageChess_users', (t) => {
     t.string('id', 36).primary();
     t.string('username', 50).notNullable().unique();
     t.string('password', 255).nullable();
@@ -21,7 +21,7 @@ exports.up = async function (knex) {
     t.bigInteger('created_at').nullable();
   });
 
-  await knex.schema.createTable('linked_games', (t) => {
+  await knex.schema.createTable('HostageChess_games', (t) => {
     t.string('id', 36).primary();
     t.string('name', 200).notNullable();
     t.enum('status', ['waiting', 'playing', 'finished']).defaultTo('waiting');
@@ -46,6 +46,6 @@ exports.up = async function (knex) {
 };
 
 exports.down = async function (knex) {
-  await knex.schema.dropTableIfExists('linked_games');
-  await knex.schema.dropTableIfExists('linked_users');
+  await knex.schema.dropTableIfExists('HostageChess_games');
+  await knex.schema.dropTableIfExists('HostageChess_users');
 };

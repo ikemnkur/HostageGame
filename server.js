@@ -9,6 +9,7 @@ require('dotenv').config();
 
 const knex = require('./config/knex');
 const emailService = require('./email-service');
+const HostageEngine = require('./public/js/engine.js');
 
 const app = express();
 const server = http.createServer(app);
@@ -22,6 +23,12 @@ const activeTimers = {};  // gameId -> intervalId
 const gameClocks  = {};   // gameId -> { color: remainingMs, ... }
 const turnStartTs = {};   // gameId -> Date.now() when current turn began
 const drawRequests = {};  // gameId -> { requestedBy: userId, agreedBy: [userIds] }
+
+const TABLES = {
+  accounts: 'account',
+  users: 'HostageChess_users',
+  games: 'HostageChess_games',
+};
 
 // ─── DB helpers ───────────────────────────────────────────
 
@@ -53,6 +60,7 @@ function rowToUser(row) {
 
 function rowToGame(row) {
   if (!row) return null;
+  const storedTracker = parseJSON(row.center_hold_tracker) || {};
   return {
     id: row.id,
     name: row.name,
@@ -62,7 +70,11 @@ function rowToGame(row) {
     board: parseJSON(row.board) || [],
     currentTurn: row.current_turn,
     turnCount: row.turn_count,
-    centerHoldTracker: parseJSON(row.center_hold_tracker) || { red: 0, blue: 0, green: 0, yellow: 0 },
+    centerHoldTracker: storedTracker,
+    points: storedTracker.points || { white: 0, black: 0 },
+    queenCrossedToOwnSide: storedTracker.queenCrossedToOwnSide || { white: false, black: false },
+    result: storedTracker.result || null,
+    timeControl: storedTracker.timeControl || null,
     winner: row.winner || null,
     timerMode: row.timer_mode || 'none',
     timerValue: row.timer_value || 0,
@@ -75,12 +87,18 @@ function rowToGame(row) {
 }
 
 async function getGame(id) {
-  const row = await knex('linked_games').where({ id }).first();
+  const row = await knex(TABLES.games).where({ id }).first();
   return rowToGame(row);
 }
 
 async function saveGame(game) {
-  await knex('linked_games').where({ id: game.id }).update({
+  const tracker = {
+    points: game.points || { white: 0, black: 0 },
+    queenCrossedToOwnSide: game.queenCrossedToOwnSide || { white: false, black: false },
+    result: game.result || null,
+    timeControl: game.timeControl || null,
+  };
+  await knex(TABLES.games).where({ id: game.id }).update({
     name: game.name,
     status: game.status,
     max_players: game.maxPlayers,
@@ -88,7 +106,7 @@ async function saveGame(game) {
     board: JSON.stringify(game.board),
     current_turn: game.currentTurn,
     turn_count: game.turnCount,
-    center_hold_tracker: JSON.stringify(game.centerHoldTracker),
+    center_hold_tracker: JSON.stringify(tracker),
     winner: game.winner || null,
     timer_mode: game.timerMode,
     timer_value: game.timerValue,
@@ -97,6 +115,28 @@ async function saveGame(game) {
     move_history: JSON.stringify(game.moveHistory || []),
     finished_at: game.finishedAt || null,
   });
+}
+
+function parseChessTimeControl(input) {
+  const raw = String(input || '').trim();
+  const m = raw.match(/^(\d{1,2})\s*m?\s*([+-])\s*(\d{1,2})\s*s?$/i);
+  if (!m) return null;
+
+  const baseMinutes = parseInt(m[1], 10);
+  const sign = m[2];
+  const incrementSecondsAbs = parseInt(m[3], 10);
+
+  if (!Number.isFinite(baseMinutes) || baseMinutes < 1 || baseMinutes > 60) return null;
+  if (!Number.isFinite(incrementSecondsAbs) || incrementSecondsAbs > 60) return null;
+
+  const incrementSeconds = sign === '-' ? -incrementSecondsAbs : incrementSecondsAbs;
+  return {
+    label: `${baseMinutes}${sign}${incrementSecondsAbs}`,
+    baseMinutes,
+    baseMs: baseMinutes * 60 * 1000,
+    incrementSeconds,
+    incrementMs: incrementSeconds * 1000,
+  };
 }
 
 // ─── Auth helpers ─────────────────────────────────────────
@@ -160,7 +200,7 @@ async function sendVerificationEmailHelper(account) {
       username: account.firstName || account.username || 'there',
       verificationLink: link,
       verificationCode: code,
-      subject: 'Verify your Linked account',
+      subject: 'Verify your Hostage account',
     });
     console.log(`✅ Verification email sent to ${account.email} (expires ${expiresAt.toISOString()})`);
   } catch (err) {
@@ -174,7 +214,7 @@ async function sendPasswordResetEmailHelper(account, code) {
       to: account.email,
       username: account.firstName || account.username || 'there',
       resetCode: code,
-      subject: 'Reset your Linked password',
+      subject: 'Reset your Hostage password',
     });
     console.log(`✅ Password reset email sent to ${account.email}`);
   } catch (err) {
@@ -182,18 +222,18 @@ async function sendPasswordResetEmailHelper(account, code) {
   }
 }
 
-// Ensure linked_users stats record exists for an account (creates one on first play)
-async function ensureLinkedUser(accountRow) {
-  const existing = await knex('linked_users').where({ id: accountRow.id }).first();
+// Ensure the game stats record exists for an account (creates one on first play)
+async function ensureHostageChessUser(accountRow) {
+  const existing = await knex(TABLES.users).where({ id: accountRow.id }).first();
   if (!existing) {
-    await knex('linked_users').insert({
+    await knex(TABLES.users).insert({
       id: accountRow.id,
       username: accountRow.username,
       wins: 0, losses: 0, draws: 0, games_played: 0,
       elo: 1200,
       created_at: Date.now(),
     });
-    return await knex('linked_users').where({ id: accountRow.id }).first();
+    return await knex(TABLES.users).where({ id: accountRow.id }).first();
   }
   return existing;
 }
@@ -242,7 +282,14 @@ app.use('/api', (req, res, next) => {
 
 app.use(express.static(path.join(__dirname, 'public'), {
   etag: false,        // disable ETag-based conditional caching
-  lastModified: false // disable Last-Modified-based conditional caching
+  lastModified: false, // disable Last-Modified-based conditional caching
+  setHeaders: (res) => {
+    // Always serve the latest static assets to avoid hard-refresh requirements.
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
+  }
 }));
 
 // ─── REST API ────────────────────────────────────────────
@@ -260,7 +307,7 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters.' });
 
     // Check uniqueness
-    const conflict = await knex('account')
+    const conflict = await knex(TABLES.accounts)
       .where(function () {
         this.whereRaw('LOWER(username) = ?', [username.trim().toLowerCase()])
             .orWhereRaw('LOWER(email) = ?', [email.trim().toLowerCase()]);
@@ -274,7 +321,7 @@ app.post('/api/auth/register', async (req, res) => {
     const id = generateAccountId();
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
-    await knex('account').insert({
+    await knex(TABLES.accounts).insert({
       id,
       username:  username.trim(),
       email:     email.trim().toLowerCase(),
@@ -288,7 +335,8 @@ app.post('/api/auth/register', async (req, res) => {
       updatedAt: Date.now(),
     });
 
-    const newAccount = await knex('account').where({ id }).first();
+    const newAccount = await knex(TABLES.accounts).where({ id }).first();
+    const statsRow = await ensureHostageChessUser(newAccount);
 
     // Send verification email if email service is configured
     if (process.env.SES_SMTP_USER) {
@@ -300,7 +348,7 @@ app.post('/api/auth/register', async (req, res) => {
       message: process.env.SES_SMTP_USER
         ? 'Account created. Please check your email to verify your account.'
         : 'Account created successfully.',
-      user: safeAccountResponse(newAccount),
+      user: safeAccountResponse(newAccount, statsRow),
     });
   } catch (e) {
     console.error('[auth:register]', e.message);
@@ -315,7 +363,7 @@ app.post('/api/auth/login', async (req, res) => {
     if (!login || !password)
       return res.status(400).json({ error: 'Username/email and password are required.' });
 
-    const row = await knex('account')
+    const row = await knex(TABLES.accounts)
       .where(function () {
         this.whereRaw('LOWER(username) = ?', [login.trim().toLowerCase()])
             .orWhereRaw('LOWER(email) = ?',    [login.trim().toLowerCase()]);
@@ -332,14 +380,14 @@ app.post('/api/auth/login', async (req, res) => {
     if (!match)
       return res.status(401).json({ error: 'Invalid credentials.' });
 
-    await knex('account').where({ id: row.id }).update({
+    await knex(TABLES.accounts).where({ id: row.id }).update({
       lastLogin:   formatDateTimeForMySQL(new Date()),
       loginStatus: true,
       updatedAt:   Date.now(),
     });
 
     // Ensure game stats row exists
-    const statsRow = await ensureLinkedUser(row);
+    const statsRow = await ensureHostageChessUser(row);
 
     res.json({
       success: true,
@@ -371,7 +419,7 @@ app.post('/api/auth/verify-email', async (req, res) => {
       return res.status(400).json({ error: 'Verification code has expired.' });
 
     await knex('emailVerifications').where({ id: record.id }).update({ used: 1 });
-    await knex('account').where({ email }).update({ verification: 'true', updatedAt: Date.now() });
+    await knex(TABLES.accounts).where({ email }).update({ verification: 'true', updatedAt: Date.now() });
 
     res.json({ success: true, message: 'Email verified successfully.' });
   } catch (e) {
@@ -386,7 +434,7 @@ app.post('/api/auth/resend-verification', async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required.' });
 
-    const account = await knex('account').whereRaw('LOWER(email) = ?', [email.trim().toLowerCase()]).first();
+    const account = await knex(TABLES.accounts).whereRaw('LOWER(email) = ?', [email.trim().toLowerCase()]).first();
     if (!account) return res.status(404).json({ error: 'No account found with that email.' });
     if (account.verification === 'true') return res.status(400).json({ error: 'Email is already verified.' });
 
@@ -407,13 +455,13 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required.' });
 
-    const account = await knex('account').whereRaw('LOWER(email) = ?', [email.trim().toLowerCase()]).first();
+    const account = await knex(TABLES.accounts).whereRaw('LOWER(email) = ?', [email.trim().toLowerCase()]).first();
     // Always return success to avoid user enumeration
     if (!account) return res.json({ success: true, message: 'If that email exists, a reset code has been sent.' });
 
     const code = generateResetCode();
     const expiry = formatDateTimeForMySQL(new Date(Date.now() + 15 * 60 * 1000)); // 15 min
-    await knex('account').where({ id: account.id }).update({ resetCode: code, resetCodeExpiry: expiry, updatedAt: Date.now() });
+    await knex(TABLES.accounts).where({ id: account.id }).update({ resetCode: code, resetCodeExpiry: expiry, updatedAt: Date.now() });
 
     if (process.env.SES_SMTP_USER) {
       await sendPasswordResetEmailHelper(account, code);
@@ -435,14 +483,14 @@ app.post('/api/auth/reset-password', async (req, res) => {
     if (newPassword.length < 6)
       return res.status(400).json({ error: 'Password must be at least 6 characters.' });
 
-    const account = await knex('account').whereRaw('LOWER(email) = ?', [email.trim().toLowerCase()]).first();
+    const account = await knex(TABLES.accounts).whereRaw('LOWER(email) = ?', [email.trim().toLowerCase()]).first();
     if (!account || account.resetCode !== resetCode)
       return res.status(400).json({ error: 'Invalid or expired reset code.' });
     if (!account.resetCodeExpiry || new Date(account.resetCodeExpiry).getTime() < Date.now())
       return res.status(400).json({ error: 'Reset code has expired.' });
 
     const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-    await knex('account').where({ id: account.id }).update({
+    await knex(TABLES.accounts).where({ id: account.id }).update({
       passwordHash,
       resetCode: null,
       resetCodeExpiry: null,
@@ -461,7 +509,7 @@ app.post('/api/auth/logout', async (req, res) => {
   try {
     const { userId } = req.body;
     if (userId) {
-      await knex('account').where({ id: userId }).update({ loginStatus: false, updatedAt: Date.now() });
+      await knex(TABLES.accounts).where({ id: userId }).update({ loginStatus: false, updatedAt: Date.now() });
     }
     res.json({ success: true, message: 'Logged out successfully.' });
   } catch (e) {
@@ -473,7 +521,7 @@ app.post('/api/auth/logout', async (req, res) => {
 // List games
 app.get('/api/games', async (_req, res) => {
   try {
-    const rows = await knex('linked_games').whereNot({ status: 'finished' });
+    const rows = await knex(TABLES.games).whereNot({ status: 'finished' });
     const games = rows.map(r => {
       const g = rowToGame(r);
       return {
@@ -485,6 +533,7 @@ app.get('/api/games', async (_req, res) => {
         players: g.players.map(p => ({ username: p.username, color: p.color })),
         timerMode: g.timerMode,
         timerValue: g.timerValue,
+        timeControl: g.timeControl || null,
       };
     });
     res.json({ games });
@@ -497,13 +546,13 @@ app.get('/api/games', async (_req, res) => {
 // Create game
 app.post('/api/games', async (req, res) => {
   try {
-    const { userId, gameName, maxPlayers, timerMode, timerValue } = req.body;
-    const userRow = await knex('linked_users').where({ id: userId }).first();
+    const { userId, gameName, timerMode, timerValue, timeControl } = req.body;
+    const userRow = await knex(TABLES.users).where({ id: userId }).first();
     if (!userRow) return res.status(400).json({ error: 'User not found.' });
     const user = rowToUser(userRow);
 
-    const COLORS = ['red', 'blue', 'green', 'yellow'];
-    const max = [2, 3, 4].includes(maxPlayers) ? maxPlayers : 4;
+    const COLORS = ['white', 'black'];
+    const max = 2;
 
     let tMode = 'none', tValue = 0;
     if (timerMode === 'total' && timerValue > 0) {
@@ -512,14 +561,26 @@ app.post('/api/games', async (req, res) => {
     } else if (timerMode === 'perTurn' && timerValue > 0) {
       tMode = 'perTurn';
       tValue = Math.max(10, Math.min(300, timerValue));
+    } else if (timerMode === 'chess') {
+      const parsed = parseChessTimeControl(timeControl);
+      if (!parsed) {
+        return res.status(400).json({ error: 'Invalid chess time control. Use format like 1+1, 5+0, or 3-1.' });
+      }
+      tMode = 'chess';
+      // Store base seconds in legacy timer_value column.
+      tValue = Math.floor(parsed.baseMs / 1000);
     }
 
     const gameId = uuidv4();
     const gameName_ = gameName || `${user.username}'s Game`;
     const players = [{ id: user.id, username: user.username, color: COLORS[0] }];
-    const centerHoldTracker = { red: 0, blue: 0, green: 0, yellow: 0 };
+    const centerHoldTracker = {
+      points: { white: 0, black: 0 },
+      queenCrossedToOwnSide: { white: false, black: false },
+      timeControl: tMode === 'chess' ? parseChessTimeControl(timeControl) : null,
+    };
 
-    await knex('linked_games').insert({
+    await knex(TABLES.games).insert({
       id: gameId,
       name: gameName_,
       status: 'waiting',
@@ -555,11 +616,11 @@ app.post('/api/games/:gameId/join', async (req, res) => {
     if (game.players.length >= game.maxPlayers) return res.status(400).json({ error: 'Game is full.' });
     if (game.players.find(p => p.id === userId)) return res.status(400).json({ error: 'Already in this game.' });
 
-    const userRow = await knex('linked_users').where({ id: userId }).first();
+    const userRow = await knex(TABLES.users).where({ id: userId }).first();
     if (!userRow) return res.status(400).json({ error: 'User not found.' });
     const user = rowToUser(userRow);
 
-    const COLORS = ['red', 'blue', 'green', 'yellow'];
+    const COLORS = ['white', 'black'];
     const takenColors = game.players.map(p => p.color);
     const color = COLORS.find(c => !takenColors.includes(c));
 
@@ -567,7 +628,9 @@ app.post('/api/games/:gameId/join', async (req, res) => {
 
     if (game.players.length === game.maxPlayers) {
       game.status = 'playing';
-      game.board = createStartingBoard(game.players);
+      game.board = HostageEngine.createStartingBoard();
+      game.points = { white: 0, black: 0 };
+      game.queenCrossedToOwnSide = { white: false, black: false };
       game.timerStartsAt = Date.now() + 3000;
       setTimeout(() => startGameTimers(game), 3000);
     }
@@ -605,6 +668,8 @@ app.get('/api/games/:gameId/history', async (req, res) => {
       status: game.status,
       players: game.players,
       winner: game.winner,
+      result: game.result || null,
+      points: game.points || { white: 0, black: 0 },
       turnCount: game.turnCount,
       moveHistory: game.moveHistory || [],
       finishedAt: game.finishedAt,
@@ -628,6 +693,8 @@ app.get('/api/games/:gameId/history/download', async (req, res) => {
       status: game.status,
       players: game.players,
       winner: game.winner,
+      result: game.result || null,
+      points: game.points || { white: 0, black: 0 },
       turnCount: game.turnCount,
       moveHistory: game.moveHistory || [],
       finishedAt: game.finishedAt,
@@ -642,8 +709,12 @@ app.get('/api/games/:gameId/history/download', async (req, res) => {
 // User stats
 app.get('/api/users/:userId/stats', async (req, res) => {
   try {
-    const row = await knex('linked_users').where({ id: req.params.userId }).first();
-    if (!row) return res.status(404).json({ error: 'User not found.' });
+    let row = await knex(TABLES.users).where({ id: req.params.userId }).first();
+    if (!row) {
+      const accountRow = await knex(TABLES.accounts).where({ id: req.params.userId }).first();
+      if (!accountRow) return res.status(404).json({ error: 'User not found.' });
+      row = await ensureHostageChessUser(accountRow);
+    }
     const user = rowToUser(row);
     const { password: _, ...safe } = user;
     res.json({ ...safe });
@@ -657,7 +728,7 @@ app.get('/api/users/:userId/stats', async (req, res) => {
 app.get('/api/users/:userId/games', async (req, res) => {
   try {
     const { userId } = req.params;
-    const rows = await knex('linked_games')
+    const rows = await knex(TABLES.games)
       .where({ status: 'finished' })
       .whereRaw('JSON_CONTAINS(players, JSON_ARRAY(JSON_OBJECT(\'id\', ?)))', [userId])
       .orderBy('finished_at', 'desc')
@@ -685,7 +756,7 @@ app.get('/api/users/:userId/games', async (req, res) => {
 // Leaderboard
 app.get('/api/leaderboard', async (_req, res) => {
   try {
-    const rows = await knex('linked_users')
+    const rows = await knex(TABLES.users)
       .where('games_played', '>', 0)
       .orderBy('elo', 'desc')
       .limit(100)
@@ -713,16 +784,7 @@ function createEmptyBoard() {
 }
 
 function createStartingBoard(players) {
-  const board = createEmptyBoard();
-  const colorToEdge = {};
-  players.forEach(p => { colorToEdge[p.color] = p.color; });
-
-  if (colorToEdge.red)    for (let c = 1; c <= 6; c++) board[0][c] = { color: 'red' };
-  if (colorToEdge.blue)   for (let c = 1; c <= 6; c++) board[7][c] = { color: 'blue' };
-  if (colorToEdge.green)  for (let r = 1; r <= 6; r++) board[r][0] = { color: 'green' };
-  if (colorToEdge.yellow) for (let r = 1; r <= 6; r++) board[r][7] = { color: 'yellow' };
-
-  return board;
+  return HostageEngine.createStartingBoard();
 }
 
 function sanitizeGame(game) {
@@ -736,6 +798,10 @@ function sanitizeGame(game) {
     currentTurn: game.currentTurn,
     turnCount: game.turnCount,
     centerHoldTracker: game.centerHoldTracker,
+    points: game.points || { white: 0, black: 0 },
+    queenCrossedToOwnSide: game.queenCrossedToOwnSide || { white: false, black: false },
+    result: game.result || null,
+    timeControl: game.timeControl || null,
     winner: game.winner,
     timerMode: game.timerMode || 'none',
     timerValue: game.timerValue || 0,
@@ -758,7 +824,7 @@ io.on('connection', (socket) => {
 
   socket.on('game:move', async (data) => {
     try {
-      const { gameId, userId, from, to } = data;
+      const { gameId, userId, from, to, options } = data;
       const game = await getGame(gameId);
       if (!game || game.status !== 'playing') return;
 
@@ -771,49 +837,57 @@ io.on('connection', (socket) => {
         return;
       }
 
-      const result = processMove(game, playerColor, from, to);
+      const engineState = {
+        board: game.board,
+        turn: game.players[game.currentTurn]?.color || 'white',
+        moveCount: game.turnCount || 0,
+        status: game.status || 'playing',
+        points: game.points || { white: 0, black: 0 },
+        queenCrossedToOwnSide: game.queenCrossedToOwnSide || { white: false, black: false },
+      };
+
+      const result = HostageEngine.applyMove(engineState, from, to, options || {});
       if (!result.valid) {
-        socket.emit('game:moveError', { error: result.error });
+        socket.emit('game:moveError', { error: result.error || 'Illegal move.' });
         return;
       }
 
-      game.board = result.board;
+      game.board = result.state.board;
+      game.turnCount = result.state.moveCount;
+      game.points = result.state.points;
+      game.queenCrossedToOwnSide = result.state.queenCrossedToOwnSide;
+      game.result = result.state.result || null;
       if (!game.moveHistory) game.moveHistory = [];
       game.moveHistory.push({
-        turn: game.turnCount,
+        turn: result.state.moveCount,
         color: playerColor,
         username: game.players[playerIndex].username,
         from, to,
+        action: result.meta?.promoted ? 'promote' : (result.meta?.demoted ? 'demote' : undefined),
         timestamp: Date.now(),
       });
 
       if (game.timerMode === 'total' && gameClocks[game.id]) {
         const elapsed = Date.now() - (turnStartTs[game.id] || Date.now());
         gameClocks[game.id][playerColor] = Math.max(0, (gameClocks[game.id][playerColor] || 0) - elapsed);
+      } else if (game.timerMode === 'chess' && gameClocks[game.id]) {
+        const elapsed = Date.now() - (turnStartTs[game.id] || Date.now());
+        const incrementMs = game.timeControl?.incrementMs || 0;
+        const next = (gameClocks[game.id][playerColor] || 0) - elapsed + incrementMs;
+        gameClocks[game.id][playerColor] = Math.max(0, next);
       }
 
-      const centerSquares = [[3,3],[3,4],[4,3],[4,4]];
-      const centerCounts = { red: 0, blue: 0, green: 0, yellow: 0 };
-      for (const [r, c] of centerSquares) {
-        if (game.board[r][c]) centerCounts[game.board[r][c].color]++;
-      }
-      for (const color of Object.keys(centerCounts)) {
-        if (centerCounts[color] >= 3) game.centerHoldTracker[color]++;
-        else game.centerHoldTracker[color] = 0;
-      }
-      for (const color of Object.keys(game.centerHoldTracker)) {
-        if (game.centerHoldTracker[color] >= 2) {
-          game.winner = color;
-          game.status = 'finished';
-          clearInterval(activeTimers[game.id]);
-          delete activeTimers[game.id];
-          await updatePlayerStats(game);
-        }
-      }
-
-      game.currentTurn = advanceTurn(game);
-      game.turnCount++;
+      game.currentTurn = result.state.turn === 'white' ? 0 : 1;
       turnStartTs[game.id] = Date.now();
+
+      if (result.state.status === 'finished' && result.state.result) {
+        game.status = 'finished';
+        if (result.state.result.type === 'win') game.winner = result.state.result.winner;
+        else game.winner = 'draw';
+        clearInterval(activeTimers[game.id]);
+        delete activeTimers[game.id];
+        await updatePlayerStats(game);
+      }
 
       await saveGame(game);
       saveGameHistory(game);
@@ -880,7 +954,7 @@ io.on('connection', (socket) => {
         drawRequests[gameId].agreedBy.push(userId);
 
         const agreedCount = drawRequests[gameId].agreedBy.length;
-        const requesterRow = await knex('linked_users').where({ id: drawRequests[gameId].requestedBy }).first();
+        const requesterRow = await knex(TABLES.users).where({ id: drawRequests[gameId].requestedBy }).first();
         io.to(gameId).emit('game:drawRequested', {
           requestedBy: requesterRow?.username,
           agreedCount,
@@ -914,143 +988,6 @@ io.on('connection', (socket) => {
   });
 });
 
-// ─── Game engine ──────────────────────────────────────────
-
-function processMove(game, playerColor, from, to) {
-  const board = game.board.map(row => row.map(cell => cell ? { ...cell } : null));
-  const [fr, fc] = from;
-  const [tr, tc] = to;
-
-  if (!board[fr][fc] || board[fr][fc].color !== playerColor) {
-    return { valid: false, error: 'Not your piece.' };
-  }
-
-  const dr = tr - fr;
-  const dc = tc - fc;
-  const isDiagonal   = Math.abs(dr) === 1 && Math.abs(dc) === 1;
-  const isOrthogonal = (Math.abs(dr) + Math.abs(dc)) === 1;
-
-  if (!isDiagonal && !isOrthogonal) {
-    return { valid: false, error: 'Invalid move distance.' };
-  }
-
-  if (isOrthogonal) {
-    if (board[tr][tc] !== null) return { valid: false, error: 'Square is occupied.' };
-    board[tr][tc] = board[fr][fc];
-    board[fr][fc] = null;
-  }
-
-  if (isDiagonal) {
-    if (board[tr][tc] !== null && board[tr][tc].color !== playerColor) {
-      const enemy = board[tr][tc];
-      const pushTarget = findPushLanding(board, fr, fc, tr, tc);
-      if (!pushTarget) return { valid: false, error: 'No valid square to push enemy to.' };
-      board[pushTarget[0]][pushTarget[1]] = enemy;
-      board[tr][tc] = board[fr][fc];
-      board[fr][fc] = null;
-    } else if (board[tr][tc] === null) {
-      if (!hasAdjacentFriendly(board, tr, tc, playerColor, fr, fc)) {
-        return { valid: false, error: 'Diagonal hop must connect to a friendly piece.' };
-      }
-      board[tr][tc] = board[fr][fc];
-      board[fr][fc] = null;
-    } else {
-      return { valid: false, error: 'Cannot move onto your own piece.' };
-    }
-  }
-
-  removeUnlinkedPieces(board, playerColor);
-  return { valid: true, board };
-}
-
-function findPushLanding(board, origR, origC, attackedR, attackedC) {
-  const visited = new Set();
-  const queue = [[attackedR, attackedC, 0]];
-  visited.add(`${attackedR},${attackedC}`);
-
-  const origAdjacent = new Set();
-  for (let dr = -1; dr <= 1; dr++) {
-    for (let dc = -1; dc <= 1; dc++) {
-      if (dr === 0 && dc === 0) continue;
-      const nr = origR + dr, nc = origC + dc;
-      if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) origAdjacent.add(`${nr},${nc}`);
-    }
-  }
-  origAdjacent.add(`${origR},${origC}`);
-
-  while (queue.length > 0) {
-    const [r, c] = queue.shift();
-    for (let dr = -1; dr <= 1; dr++) {
-      for (let dc = -1; dc <= 1; dc++) {
-        if (dr === 0 && dc === 0) continue;
-        const nr = r + dr, nc = c + dc;
-        if (nr < 0 || nr >= 8 || nc < 0 || nc >= 8) continue;
-        const key = `${nr},${nc}`;
-        if (visited.has(key)) continue;
-        visited.add(key);
-        if (board[nr][nc] === null && !origAdjacent.has(key)) return [nr, nc];
-        queue.push([nr, nc, 0]);
-      }
-    }
-  }
-  return null;
-}
-
-function hasAdjacentFriendly(board, r, c, color, excludeR, excludeC) {
-  for (let dr = -1; dr <= 1; dr++) {
-    for (let dc = -1; dc <= 1; dc++) {
-      if (dr === 0 && dc === 0) continue;
-      const nr = r + dr, nc = c + dc;
-      if (nr < 0 || nr >= 8 || nc < 0 || nc >= 8) continue;
-      if (nr === excludeR && nc === excludeC) continue;
-      if (board[nr][nc] && board[nr][nc].color === color) return true;
-    }
-  }
-  return false;
-}
-
-function removeUnlinkedPieces(board, color) {
-  const pieces = [];
-  for (let r = 0; r < 8; r++)
-    for (let c = 0; c < 8; c++)
-      if (board[r][c] && board[r][c].color === color) pieces.push([r, c]);
-
-  const visited = new Set();
-  const components = [];
-
-  function bfs(startR, startC) {
-    const comp = [];
-    const q = [[startR, startC]];
-    visited.add(`${startR},${startC}`);
-    while (q.length > 0) {
-      const [r, c] = q.shift();
-      comp.push([r, c]);
-      for (let dr = -1; dr <= 1; dr++) {
-        for (let dc = -1; dc <= 1; dc++) {
-          if (dr === 0 && dc === 0) continue;
-          const nr = r + dr, nc = c + dc;
-          const key = `${nr},${nc}`;
-          if (visited.has(key)) continue;
-          if (nr < 0 || nr >= 8 || nc < 0 || nc >= 8) continue;
-          if (board[nr][nc] && board[nr][nc].color === color) {
-            visited.add(key);
-            q.push([nr, nc]);
-          }
-        }
-      }
-    }
-    return comp;
-  }
-
-  for (const [r, c] of pieces) {
-    if (!visited.has(`${r},${c}`)) components.push(bfs(r, c));
-  }
-
-  for (const comp of components) {
-    if (comp.length === 1) { const [r, c] = comp[0]; board[r][c] = null; }
-  }
-}
-
 // ─── Timer management ─────────────────────────────────────
 
 function startGameTimers(game) {
@@ -1060,6 +997,10 @@ function startGameTimers(game) {
     const totalMs = game.timerValue * 60 * 1000;
     gameClocks[game.id] = {};
     game.players.forEach(p => { gameClocks[game.id][p.color] = totalMs; });
+  } else if (game.timerMode === 'chess') {
+    const baseMs = game.timeControl?.baseMs || (game.timerValue * 1000);
+    gameClocks[game.id] = {};
+    game.players.forEach(p => { gameClocks[game.id][p.color] = baseMs; });
   } else if (game.timerMode === 'perTurn') {
     const turnMs = game.timerValue * 1000;
     gameClocks[game.id] = {};
@@ -1088,7 +1029,7 @@ async function tickGameTimer(gameId) {
     const elapsed = Date.now() - (turnStartTs[gameId] || Date.now());
 
     let remaining;
-    if (game.timerMode === 'total') {
+    if (game.timerMode === 'total' || game.timerMode === 'chess') {
       remaining = Math.max(0, (clocks[color] || 0) - elapsed);
     } else {
       remaining = Math.max(0, game.timerValue * 1000 - elapsed);
@@ -1177,17 +1118,17 @@ async function updatePlayerStats(game) {
 
   for (const player of game.players) {
     if (isDraw) {
-      await knex('linked_users').where({ id: player.id }).increment({ draws: 1, games_played: 1 });
+      await knex(TABLES.users).where({ id: player.id }).increment({ draws: 1, games_played: 1 });
     } else if (player.color === game.winner) {
-      await knex('linked_users').where({ id: player.id }).increment({ wins: 1, games_played: 1 });
+      await knex(TABLES.users).where({ id: player.id }).increment({ wins: 1, games_played: 1 });
     } else {
-      await knex('linked_users').where({ id: player.id }).increment({ losses: 1, games_played: 1 });
+      await knex(TABLES.users).where({ id: player.id }).increment({ losses: 1, games_played: 1 });
     }
   }
 
   const now = Date.now();
   game.finishedAt = now;
-  await knex('linked_games').where({ id: game.id }).update({ finished_at: now });
+  await knex(TABLES.games).where({ id: game.id }).update({ finished_at: now });
 
 }
 
@@ -1217,7 +1158,7 @@ app.use((_req, res) => {
 const PORT = process.env.PORT || 3002;
 const PROXY = process.env.PROXY_PATH || '';
 // server.listen(PORT, () => {
-//   console.log(`Linked server running on http://localhost:${PORT}`);
+//   console.log(`HostageChess server running on http://localhost:${PORT}`);
 // });
 
 

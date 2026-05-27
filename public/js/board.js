@@ -25,10 +25,6 @@ window.BoardRenderer = (() => {
   const spriteCache = new Map();
 
   const COLORS_MAP = {
-    red:    '#e94560',
-    blue:   '#4ecdc4',
-    green:  '#00eb95',
-    yellow: '#ffd93d',
     white:  '#f5f5f5',
     black:  '#1e1e1e',
   };
@@ -37,11 +33,16 @@ window.BoardRenderer = (() => {
   const CENTER_HIGHLIGHT = 'rgba(233, 69, 96, 0.25)';
   const SELECT_HIGHLIGHT = 'rgba(255, 255, 255, 0.35)';
   const MOVE_HIGHLIGHT   = 'rgba(100, 255, 100, 0.4)';
+  const WHITE_CASTLE_HIGHLIGHT = 'rgba(239, 68, 68, 0.28)';
+  const BLACK_CASTLE_HIGHLIGHT = 'rgba(59, 130, 246, 0.28)';
+  const LAST_MOVE_FROM_HIGHLIGHT = 'rgba(209, 213, 219, 0.38)';
+  const LAST_MOVE_TO_HIGHLIGHT = 'rgba(75, 85, 99, 0.48)';
+  const LAST_MOVE_BORDER = 'rgba(250, 204, 21, 0.95)';
 
   function create(container, opts = {}) {
     const size = opts.size || 480;
     const cellSize = size / 8;
-    const diamond45 = !!opts.diamond45;
+    let diamond45 = !!opts.diamond45;
     const diamondScale = opts.diamondScale || 0.7;
     const pieceRotationDeg = Number.isFinite(opts.pieceRotationDeg) ? opts.pieceRotationDeg : 0;
     const pieceRotationRad = pieceRotationDeg * (Math.PI / 180);
@@ -51,11 +52,31 @@ window.BoardRenderer = (() => {
     container.appendChild(canvas);
     const ctx = canvas.getContext('2d');
 
-    let board = LinkedEngine.createEmptyBoard();
+    if (!container.style.position) container.style.position = 'relative';
+
+    const clickIndicator = document.createElement('div');
+    clickIndicator.style.position = 'absolute';
+    clickIndicator.style.left = '10px';
+    clickIndicator.style.bottom = '10px';
+    clickIndicator.style.padding = '4px 8px';
+    clickIndicator.style.borderRadius = '6px';
+    clickIndicator.style.background = 'rgba(25, 25, 25, 0.65)';
+    clickIndicator.style.color = 'rgba(245, 245, 245, 0.92)';
+    clickIndicator.style.font = '600 12px Segoe UI, sans-serif';
+    clickIndicator.style.letterSpacing = '0.02em';
+    clickIndicator.style.pointerEvents = 'none';
+    clickIndicator.style.opacity = '0';
+    clickIndicator.style.transition = 'opacity 180ms ease';
+    clickIndicator.style.zIndex = '3';
+    container.appendChild(clickIndicator);
+
+    let board = HostageEngine.createEmptyBoard();
     let selectedCell = null;
     let legalMoves = [];
     let onCellClick = null;
     let rotation = 0; // 0, 90, 180, 270 degrees
+    let lastMoveFrom = null;
+    let lastMoveTo = null;
 
     // ─── Animation state ──────────────────────────────────
     let animating = false;
@@ -70,6 +91,7 @@ window.BoardRenderer = (() => {
     let fadingPieces = [];      // [{logR, logC, opacity, piece}] pieces fading out
     let fadeStartTime = 0;
     let fadeDuration = 400;     // ms for fade-out
+    let clickIndicatorTimer = null;
 
     function getSpriteForPiece(piece) {
       if (!piece || !piece.type || !piece.color) return null;
@@ -150,6 +172,20 @@ window.BoardRenderer = (() => {
       }
     }
 
+    function toSquareLabel(r, c) {
+      return `${String.fromCharCode(65 + c)}${8 - r}`;
+    }
+
+    function showClickIndicator(r, c) {
+      clickIndicator.textContent = `Clicked: ${toSquareLabel(r, c)}`;
+      clickIndicator.style.opacity = '1';
+      if (clickIndicatorTimer) clearTimeout(clickIndicatorTimer);
+      clickIndicatorTimer = setTimeout(() => {
+        clickIndicator.style.opacity = '0';
+        clickIndicatorTimer = null;
+      }, 2000);
+    }
+
     // ─── Draw a single piece at pixel (cx, cy) ──────────
     function drawPieceAt(piece, cx, cy, alpha) {
       ctx.save();
@@ -157,9 +193,11 @@ window.BoardRenderer = (() => {
       const radius = cellSize * 0.35;
       const hasType = typeof piece.type === 'string' && piece.type.length > 0;
 
-      if (pieceRotationRad !== 0) {
+      // Apply an extra 45deg CCW rotation in rhombus mode around each piece center.
+      const effectivePieceRotationRad = pieceRotationRad + (diamond45 ? -Math.PI / 4 : 0);
+      if (effectivePieceRotationRad !== 0) {
         ctx.translate(cx, cy);
-        ctx.rotate(pieceRotationRad);
+        ctx.rotate(effectivePieceRotationRad);
         ctx.translate(-cx, -cy);
       }
 
@@ -168,6 +206,26 @@ window.BoardRenderer = (() => {
         if (sprite) {
           const spriteSize = cellSize * 0.84;
           ctx.drawImage(sprite, cx - spriteSize / 2, cy - spriteSize / 2, spriteSize, spriteSize);
+
+          if (piece.sharedRoyalPair && piece.sharedWith) {
+            const sharedSprite = getSpriteForPiece(piece.sharedWith);
+            const badgeSize = cellSize * 0.42;
+            const bx = cx + cellSize * 0.2;
+            const by = cy + cellSize * 0.2;
+            ctx.beginPath();
+            ctx.arc(bx, by, badgeSize * 0.52, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';
+            ctx.fill();
+            if (sharedSprite) {
+              ctx.drawImage(sharedSprite, bx - badgeSize / 2, by - badgeSize / 2, badgeSize, badgeSize);
+            } else {
+              ctx.fillStyle = '#fff';
+              ctx.font = `700 ${Math.floor(cellSize * 0.2)}px Segoe UI`;
+              ctx.textAlign = 'center';
+              const effectivePieceRotationRad = pieceRotationRad + (diamond45 ? -Math.PI / 4 : 0);
+              ctx.fillText('Q', bx, by + 0.5);
+            }
+          }
 
           if (piece.paired) {
             ctx.beginPath();
@@ -228,6 +286,16 @@ window.BoardRenderer = (() => {
         ctx.textBaseline = 'middle';
         ctx.fillText(label, cx, cy + 1);
 
+        if (piece.sharedRoyalPair) {
+          ctx.beginPath();
+          ctx.arc(cx + radius * 0.68, cy + radius * 0.68, cellSize * 0.12, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(0,0,0,0.72)';
+          ctx.fill();
+          ctx.fillStyle = '#fff';
+          ctx.font = `700 ${Math.floor(cellSize * 0.18)}px Segoe UI`;
+          ctx.fillText('Q', cx + radius * 0.68, cy + radius * 0.68 + 0.5);
+        }
+
         if (piece.paired) {
           ctx.beginPath();
           ctx.arc(cx + radius * 0.62, cy - radius * 0.62, cellSize * 0.11, 0, Math.PI * 2);
@@ -275,6 +343,26 @@ window.BoardRenderer = (() => {
       ctx.restore();
     }
 
+    function drawSquareNumber(logicalR, logicalC, x, y) {
+      const squareLabel = toSquareLabel(logicalR, logicalC);
+      const labelX = x + cellSize * 0.08;
+      const labelY = y + cellSize * 0.06;
+      ctx.save();
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = '#6b7280';
+      ctx.font = `800 ${Math.max(15, Math.floor(cellSize * 0.2))}px Segoe UI`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      if (diamond45) {
+        ctx.translate(labelX, labelY);
+        ctx.rotate(-45 * Math.PI / 180);
+        ctx.fillText(squareLabel, -8, 5);
+      } else {
+        ctx.fillText(squareLabel, labelX, labelY);
+      }
+      ctx.restore();
+    }
+
     function draw() {
       ctx.clearRect(0, 0, size, size);
 
@@ -291,16 +379,44 @@ window.BoardRenderer = (() => {
             ctx.fillStyle = (displayR + displayC) % 2 === 0 ? LIGHT : DARK;
             ctx.fillRect(x, y, cellSize, cellSize);
 
-            // Center highlight
-            if (LinkedEngine.isCenter(logicalR, logicalC)) {
-              ctx.fillStyle = CENTER_HIGHLIGHT;
+            // Castle/home square highlights
+            const whiteHome = HostageEngine.CASTLE_HOME?.white;
+            const blackHome = HostageEngine.CASTLE_HOME?.black;
+            if (whiteHome && logicalR === whiteHome[0] && logicalC === whiteHome[1]) {
+              ctx.fillStyle = WHITE_CASTLE_HIGHLIGHT;
               ctx.fillRect(x, y, cellSize, cellSize);
-              // Dashed border
-              ctx.strokeStyle = 'rgba(233, 69, 96, 0.5)';
+            }
+            if (blackHome && logicalR === blackHome[0] && logicalC === blackHome[1]) {
+              ctx.fillStyle = BLACK_CASTLE_HIGHLIGHT;
+              ctx.fillRect(x, y, cellSize, cellSize);
+            }
+
+            // // Center highlight
+            // if (HostageEngine.isCenter(logicalR, logicalC)) {
+            //   ctx.fillStyle = CENTER_HIGHLIGHT;
+            //   ctx.fillRect(x, y, cellSize, cellSize);
+            //   // Dashed border
+            //   ctx.strokeStyle = 'rgba(233, 69, 96, 0.5)';
+            //   ctx.lineWidth = 2;
+            //   ctx.setLineDash([4, 4]);
+            //   ctx.strokeRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
+            //   ctx.setLineDash([]);
+            // }
+
+            // Last move markers (old square light gray, new square dark gray)
+            if (lastMoveFrom && logicalR === lastMoveFrom[0] && logicalC === lastMoveFrom[1]) {
+              ctx.fillStyle = LAST_MOVE_FROM_HIGHLIGHT;
+              ctx.fillRect(x, y, cellSize, cellSize);
+              ctx.strokeStyle = LAST_MOVE_BORDER;
               ctx.lineWidth = 2;
-              ctx.setLineDash([4, 4]);
               ctx.strokeRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
-              ctx.setLineDash([]);
+            }
+            if (lastMoveTo && logicalR === lastMoveTo[0] && logicalC === lastMoveTo[1]) {
+              ctx.fillStyle = LAST_MOVE_TO_HIGHLIGHT;
+              ctx.fillRect(x, y, cellSize, cellSize);
+              ctx.strokeStyle = LAST_MOVE_BORDER;
+              ctx.lineWidth = 2;
+              ctx.strokeRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
             }
 
             // Selected cell
@@ -321,6 +437,8 @@ window.BoardRenderer = (() => {
               ctx.fillStyle = 'rgba(100, 255, 100, 0.7)';
               ctx.fill();
             }
+
+            drawSquareNumber(logicalR, logicalC, x, y);
 
             // Skip the piece on the animating source square (it's being drawn separately)
             if (animHideLogical && animHideLogical[0] === logicalR && animHideLogical[1] === logicalC) {
@@ -386,8 +504,10 @@ window.BoardRenderer = (() => {
 
       const [displayR, displayC] = cell;
       const [logicalR, logicalC] = inverseTransformCoords(displayR, displayC);
+      showClickIndicator(logicalR, logicalC);
       onCellClick(logicalR, logicalC, {
         shiftKey: !!e.shiftKey,
+        clickCount: Number(e.detail) || 1,
         timeStamp: e.timeStamp,
         pointerType: e.pointerType || 'mouse',
       });
@@ -397,6 +517,26 @@ window.BoardRenderer = (() => {
       canvas,
       setBoard(b) { board = b; if (!animating) draw(); },
       getBoard() { return board; },
+      setDiamond45(enabled) {
+        diamond45 = !!enabled;
+        draw();
+      },
+      toggleDiamond45() {
+        diamond45 = !diamond45;
+        draw();
+        return diamond45;
+      },
+      isDiamond45() { return diamond45; },
+      setLastMove(from, to) {
+        lastMoveFrom = from ? [from[0], from[1]] : null;
+        lastMoveTo = to ? [to[0], to[1]] : null;
+        draw();
+      },
+      clearLastMove() {
+        lastMoveFrom = null;
+        lastMoveTo = null;
+        draw();
+      },
       setSelected(cell) { selectedCell = cell; draw(); },
       setLegalMoves(moves) { legalMoves = moves; draw(); },
       clearHighlights() { selectedCell = null; legalMoves = []; draw(); },
@@ -460,6 +600,8 @@ window.BoardRenderer = (() => {
 
             if (disappeared.length === 0) {
               // No removals → done
+              lastMoveFrom = [from[0], from[1]];
+              lastMoveTo = [to[0], to[1]];
               animating = false;
               draw();
               return;
@@ -479,6 +621,8 @@ window.BoardRenderer = (() => {
                   animFrameId = requestAnimationFrame(fadeLoop);
                 } else {
                   fadingPieces = [];
+                  lastMoveFrom = [from[0], from[1]];
+                  lastMoveTo = [to[0], to[1]];
                   animating = false;
                   draw();
                 }
@@ -493,16 +637,17 @@ window.BoardRenderer = (() => {
       setRotation(degrees) { rotation = degrees; draw(); },
       getRotation() { return rotation; },
       rotateToPlayer(color) {
-        // Rotate board so player's pieces are at the bottom
-        const offset = 180; // Can add an offset if needed for aesthetics
-        switch(color) {
-          case 'red':    rotation = 0 + offset;   break; // Top -> no rotation
-          case 'blue':   rotation = 180 + offset; break; // Bottom -> 180°
-          case 'green':  rotation = 90 + offset;  break; // Left -> 90° CW
-          case 'yellow': rotation = 270 + offset; break; // Right -> 270° CW (90° CCW)
-          default:       rotation = 0 + offset;
+        switch (color) {
+          case 'black':
+            rotation = 180;
+            break;
+          case 'white':
+          default:
+            rotation = 0;
+            break;
         }
         draw();
+        return rotation;
       },
       draw,
     };

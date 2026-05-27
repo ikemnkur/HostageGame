@@ -18,7 +18,7 @@ window.GamePage = (() => {
   let drawRequestedHandler = null;
 
   function getUser() {
-    try { return JSON.parse(localStorage.getItem('linked_user')); } catch { return null; }
+    try { return JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user')); } catch { return null; }
   }
 
   function render(gameId) {
@@ -31,6 +31,7 @@ window.GamePage = (() => {
         <div class="game-header">
           <button id="back-to-lobby" class="btn-secondary">← Lobby</button>
           <h2 id="game-title">Loading…</h2>
+          <div class="game-time-control" id="game-time-control" style="display:none"></div>
           <div class="turn-indicator" id="turn-indicator"></div>
         </div>
 
@@ -40,10 +41,14 @@ window.GamePage = (() => {
             <div class="board-container" id="board-container"></div>
             <div class="board-controls">
               <button id="rotate-btn" class="btn-icon" title="Rotate board to your perspective">🔄</button>
+              <button id="shape-toggle-btn" class="btn-secondary" title="Toggle rhombus/square board">◇ Rhombus</button>
             </div>
             <div class="player-labels" id="player-labels"></div>
             <p class="error-msg" id="game-error"></p>
+            <div id="game-outcome-details" class="card" style="display:none; margin-top:10px; padding:10px 12px;"></div>
             <div class="game-actions" id="game-actions">
+              <button id="promote-btn" class="btn-secondary" disabled>Promote</button>
+              <button id="demote-btn" class="btn-secondary" disabled>Demote</button>
               <button id="resign-btn" class="btn-danger">Resign</button>
               <button id="draw-btn" class="btn-secondary">Offer Draw</button>
             </div>
@@ -90,7 +95,8 @@ window.GamePage = (() => {
 
     const container = document.getElementById('board-container');
     renderer = BoardRenderer.create(container, { size: Math.min(480, window.innerWidth - 40) });
-    renderer.onClick((r, c) => handleClick(r, c, user));
+    renderer.onClick((r, c, meta) => handleClick(r, c, user, meta));
+    let board_rotation = 0; //
 
     fetchGame(gameId);
 
@@ -111,7 +117,7 @@ window.GamePage = (() => {
 
       // Detect game start with timer buffer
       if (game.status === 'playing' && gameState && gameState.status === 'waiting') {
-        const maxPlayers = game.maxPlayers || 4;
+        const maxPlayers = game.maxPlayers || 2;
         Toast.success(`All ${maxPlayers} players joined! Game starting in 3 seconds...`, 3500);
         // Play game start sound after 3 seconds
         setTimeout(() => SoundManager.play('gameStart'), 3000);
@@ -241,6 +247,42 @@ window.GamePage = (() => {
       Toast.info('Draw request sent. Waiting for other players to agree...', 3000);
     });
 
+    document.getElementById('promote-btn').addEventListener('click', () => {
+      if (!gameState || gameState.status !== 'playing' || !selectedPiece) return;
+      const [r, c] = selectedPiece;
+      if (!canPromoteSelected(user)) {
+        const errEl = document.getElementById('game-error');
+        if (errEl) errEl.textContent = 'Promotion is not legal for this selection.';
+        setTimeout(() => {
+          const el = document.getElementById('game-error');
+          if (el) el.textContent = '';
+        }, 2000);
+        return;
+      }
+      SocketClient.sendMove(gameState.id, user.id, [r, c], [r, c], { promote: true });
+      selectedPiece = null;
+      renderer.clearHighlights();
+      updateActionButtons(user);
+    });
+
+    document.getElementById('demote-btn').addEventListener('click', () => {
+      if (!gameState || gameState.status !== 'playing' || !selectedPiece) return;
+      const [r, c] = selectedPiece;
+      if (!canDemoteSelected(user)) {
+        const errEl = document.getElementById('game-error');
+        if (errEl) errEl.textContent = 'Demotion is not legal for this selection.';
+        setTimeout(() => {
+          const el = document.getElementById('game-error');
+          if (el) el.textContent = '';
+        }, 2000);
+        return;
+      }
+      SocketClient.sendMove(gameState.id, user.id, [r, c], [r, c], { demote: true });
+      selectedPiece = null;
+      renderer.clearHighlights();
+      updateActionButtons(user);
+    });
+
     // Move-log action buttons (set up after DOM is ready; safe to add immediately)
     document.getElementById('review-game-btn').addEventListener('click', () => {
       window.App.navigate(`/review/${gameId}`);
@@ -302,10 +344,33 @@ window.GamePage = (() => {
       if (!gameState) return;
       const userPlayer = gameState.players.find(p => p.id === user.id);
       if (userPlayer) {
-        renderer.rotateToPlayer(userPlayer.color);
+        // renderer.setRotation(userPlayer.color === 'black' ? 180 : 0);
+        // Rotation buttons
+        // document.querySelectorAll('.rotate-color-btn-sm').forEach(btn => {
+        // btn.addEventListener('click', () => 
+        // localStorage.setItem('board_rotation', rot);
+        renderer.rotateToPlayer(board_rotation ? "white" : "black");
+        board_rotation = !board_rotation;
+        // localStorage.setItem('board_rotation', true);
+        // renderer.rotateToPlayer("black")
+        // });
         Toast.info(`Board rotated to ${userPlayer.color} perspective`, 2000);
       }
+
     });
+
+    const shapeToggleBtn = document.getElementById('shape-toggle-btn');
+    const syncShapeLabel = () => {
+      if (!shapeToggleBtn || !renderer) return;
+      shapeToggleBtn.textContent = renderer.isDiamond45() ? '□ Square' : '◇ Rhombus';
+    };
+    syncShapeLabel();
+    if (shapeToggleBtn) {
+      shapeToggleBtn.addEventListener('click', () => {
+        renderer.toggleDiamond45();
+        syncShapeLabel();
+      });
+    }
 
     // Local clock countdown for smooth display
     clockInterval = setInterval(renderClocks, 250);
@@ -329,10 +394,36 @@ window.GamePage = (() => {
   function updateUI(user, skipBoard) {
     if (!gameState || !renderer) return;
 
-    if (!skipBoard) renderer.setBoard(gameState.board);
+    if (!skipBoard) {
+      renderer.setBoard(gameState.board);
+      const lastMove = (gameState.moveHistory || []).length
+        ? gameState.moveHistory[gameState.moveHistory.length - 1]
+        : null;
+      if (lastMove && lastMove.from && lastMove.to) {
+        renderer.setLastMove(lastMove.from, lastMove.to);
+      } else {
+        renderer.clearLastMove();
+      }
+    }
 
     // Title
     document.getElementById('game-title').textContent = gameState.name;
+
+    // Time control label
+    const tcEl = document.getElementById('game-time-control');
+    if (tcEl) {
+      let tcLabel = '';
+      if (gameState.timerMode === 'total') tcLabel = `${gameState.timerValue}m total`;
+      else if (gameState.timerMode === 'perTurn') tcLabel = `${gameState.timerValue}s/turn`;
+      else if (gameState.timerMode === 'chess') tcLabel = gameState.timeControl?.label || `${Math.floor((gameState.timerValue || 0) / 60)}+0`;
+
+      if (tcLabel) {
+        tcEl.textContent = `Clock: ${tcLabel}`;
+        tcEl.style.display = 'inline-flex';
+      } else {
+        tcEl.style.display = 'none';
+      }
+    }
 
     // Turn indicator
     const turnEl = document.getElementById('turn-indicator');
@@ -347,10 +438,19 @@ window.GamePage = (() => {
       } else {
         turnEl.textContent = isMyTurn ? 'Your Turn' : `${currentPlayer.username}'s Turn`;
         turnEl.style.background = getColorCSS(currentPlayer.color);
-        turnEl.style.color = (currentPlayer.color === 'yellow' || currentPlayer.color === 'green') ? '#222' : '#fff';
+        turnEl.style.color = currentPlayer.color === 'white' ? '#111' : '#fff';
       }
     } else if (gameState.status === 'waiting') {
       turnEl.textContent = 'Waiting for players…';
+      turnEl.style.background = 'var(--bg-hover)';
+      turnEl.style.color = '#fff';
+    } else if (gameState.status === 'finished') {
+      const pts = gameState.points || { white: 0, black: 0 };
+      if (gameState.winner === 'draw') {
+        turnEl.textContent = `Game Over · Draw (${pts.white}-${pts.black})`;
+      } else {
+        turnEl.textContent = `Game Over · ${String(gameState.winner || '').toUpperCase()} wins (${pts.white}-${pts.black})`;
+      }
       turnEl.style.background = 'var(--bg-hover)';
       turnEl.style.color = '#fff';
     }
@@ -373,6 +473,9 @@ window.GamePage = (() => {
 
     // Move log
     renderMoveLog();
+
+    // Outcome detail panel
+    renderOutcomeDetails(user);
 
     // Game actions visibility
     const actionsEl = document.getElementById('game-actions');
@@ -403,6 +506,83 @@ window.GamePage = (() => {
     // Clear selection
     selectedPiece = null;
     renderer.clearHighlights();
+    updateActionButtons(user);
+  }
+
+  function renderOutcomeDetails(user) {
+    const panel = document.getElementById('game-outcome-details');
+    if (!panel || !gameState) return;
+
+    if (gameState.status !== 'finished') {
+      panel.style.display = 'none';
+      panel.innerHTML = '';
+      return;
+    }
+
+    const pts = gameState.points || { white: 0, black: 0 };
+    const margin = Math.abs((pts.white || 0) - (pts.black || 0));
+    const result = gameState.result || {};
+    const reason = result.reason || 'Game finished by rules resolution.';
+    const resultType = result.type || (gameState.winner === 'draw' ? 'draw' : 'win');
+
+    const me = gameState.players.find((p) => p.id === user.id);
+    let verdict = 'Game complete';
+    if (gameState.winner === 'draw') {
+      verdict = resultType === 'null' ? 'Null game' : 'Draw';
+    } else if (me) {
+      verdict = me.color === gameState.winner ? 'You won' : 'You lost';
+    }
+
+    panel.style.display = 'block';
+    panel.innerHTML = `
+      <div style="font-weight:700; margin-bottom:4px;">Outcome: ${verdict}</div>
+      <div style="font-size:13px; opacity:0.92; margin-bottom:2px;">Reason: ${reason}</div>
+      <div style="font-size:13px; opacity:0.92;">Score: White ${pts.white} - Black ${pts.black} (margin ${margin} or ${Math.floor(Math.max(pts.white, pts.black) / Math.min(pts.white, pts.black)) * 100}% > 50%)</div>
+    `;
+  }
+
+  function toEngineState(game) {
+    return {
+      board: game.board,
+      turn: game.players[game.currentTurn]?.color || 'white',
+      moveCount: game.turnCount || 0,
+      status: game.status || 'playing',
+      points: game.points || { white: 0, black: 0 },
+      queenCrossedToOwnSide: game.queenCrossedToOwnSide || { white: false, black: false },
+    };
+  }
+
+  function canPromoteSelected(user) {
+    if (!gameState || gameState.status !== 'playing' || !selectedPiece) return false;
+    const currentPlayer = gameState.players[gameState.currentTurn];
+    if (!currentPlayer || currentPlayer.id !== user.id) return false;
+
+    const [r, c] = selectedPiece;
+    const piece = gameState.board?.[r]?.[c];
+    if (!piece || piece.color !== currentPlayer.color || piece.type !== 'pawn' || !piece.paired) return false;
+
+    const probe = HostageEngine.applyMove(toEngineState(gameState), [r, c], [r, c], { promote: true });
+    return !!probe.valid;
+  }
+
+  function canDemoteSelected(user) {
+    if (!gameState || gameState.status !== 'playing' || !selectedPiece) return false;
+    const currentPlayer = gameState.players[gameState.currentTurn];
+    if (!currentPlayer || currentPlayer.id !== user.id) return false;
+
+    const [r, c] = selectedPiece;
+    const piece = gameState.board?.[r]?.[c];
+    if (!piece || piece.color !== currentPlayer.color || (piece.type !== 'rook' && piece.type !== 'fort')) return false;
+
+    const probe = HostageEngine.applyMove(toEngineState(gameState), [r, c], [r, c], { demote: true });
+    return !!probe.valid;
+  }
+
+  function updateActionButtons(user) {
+    const promoteBtn = document.getElementById('promote-btn');
+    if (promoteBtn) promoteBtn.disabled = !canPromoteSelected(user);
+    const demoteBtn = document.getElementById('demote-btn');
+    if (demoteBtn) demoteBtn.disabled = !canDemoteSelected(user);
   }
 
   function renderClocks() {
@@ -421,7 +601,7 @@ window.GamePage = (() => {
       // For the active player, subtract elapsed since last tick
       if (p.color === currentTickColor && !eliminated.includes(p.color) && gameState.status === 'playing') {
         const elapsed = Date.now() - (localTurnStart || Date.now());
-        if (gameState.timerMode === 'total') {
+        if (gameState.timerMode === 'total' || gameState.timerMode === 'chess') {
           remaining = Math.max(0, remaining - elapsed);
         } else {
           remaining = Math.max(0, (gameState.timerValue * 1000) - elapsed);
@@ -441,7 +621,7 @@ window.GamePage = (() => {
       const secs = Math.ceil(remaining / 1000);
       const mins = Math.floor(secs / 60);
       const s = secs % 60;
-      const display = gameState.timerMode === 'total'
+      const display = (gameState.timerMode === 'total' || gameState.timerMode === 'chess')
         ? `${mins}:${s.toString().padStart(2, '0')}`
         : `${secs}s`;
 
@@ -484,21 +664,21 @@ window.GamePage = (() => {
       if (m.event === 'eliminated') {
         return `<div class="move-entry elimination">
           <span class="move-dot" style="background:${getColorCSS(m.color)}"></span>
-          <span>${m.color} eliminated (${m.reason})</span>
+          <span>${String(m.color || '').toUpperCase()} eliminated (${m.reason})</span>
           ${timeTag}
         </div>`;
       }
       if (m.event === 'turnSkipped') {
         return `<div class="move-entry turn-skipped">
           <span class="move-dot" style="background:${getColorCSS(m.color)}"></span>
-          <span>${m.color} turn skipped (${m.reason})</span>
+          <span>${String(m.color || '').toUpperCase()} turn skipped (${m.reason})</span>
           ${timeTag}
         </div>`;
       }
       if (m.event === 'resigned') {
         return `<div class="move-entry resignation">
           <span class="move-dot" style="background:${getColorCSS(m.color)}"></span>
-          <span>${m.color} resigned</span>
+          <span>${String(m.color || '').toUpperCase()} resigned</span>
           ${timeTag}
         </div>`;
       }
@@ -511,7 +691,7 @@ window.GamePage = (() => {
       const fromStr = `${String.fromCharCode(97 + m.from[1])}${8 - m.from[0]}`;
       const toStr = `${String.fromCharCode(97 + m.to[1])}${8 - m.to[0]}`;
       return `<div class="move-entry">
-        <span class="move-num">#${m.turn + 1}</span>
+        <span class="move-num">#${m.turn || (moves.length - idx)}</span>
         <span class="move-dot" style="background:${getColorCSS(m.color)}"></span>
         <span>${m.username}: ${fromStr}→${toStr}</span>
         ${timeTag}
@@ -522,7 +702,7 @@ window.GamePage = (() => {
     el.scrollTop = 0;
   }
 
-  function handleClick(r, c, user) {
+  function handleClick(r, c, user, meta = {}) {
     if (!gameState || gameState.status !== 'playing') return;
 
     const currentPlayer = gameState.players[gameState.currentTurn];
@@ -535,54 +715,77 @@ window.GamePage = (() => {
     const myColor = currentPlayer.color;
     const board = gameState.board;
 
+    if ((meta.clickCount || 1) >= 3 && board[r][c] && board[r][c].color === myColor) {
+      const piece = board[r][c];
+      if (piece.type === 'rook' || piece.type === 'fort') {
+        SocketClient.sendMove(gameState.id, user.id, [r, c], [r, c], { demote: true });
+        selectedPiece = null;
+        renderer.clearHighlights();
+        updateActionButtons(user);
+        return;
+      }
+    }
+
     if (selectedPiece) {
       const [sr, sc] = selectedPiece;
       // Clicking same piece — deselect
       if (sr === r && sc === c) {
         selectedPiece = null;
         renderer.clearHighlights();
+        updateActionButtons(user);
         return;
       }
 
-      // Try to move
-      const result = LinkedEngine.processMove(board, myColor, [sr, sc], [r, c]);
-      if (result.valid) {
+      // Try to move (client pre-check against legal move list)
+      const legal = HostageEngine.getLegalMoves(board, myColor, sr, sc);
+      const canMove = legal.some(([mr, mc]) => mr === r && mc === c);
+      if (canMove) {
         SocketClient.sendMove(gameState.id, user.id, [sr, sc], [r, c]);
         selectedPiece = null;
         renderer.clearHighlights();
+        updateActionButtons(user);
         return;
       }
 
       // If clicked another own piece, select it instead
       if (board[r][c] && board[r][c].color === myColor) {
         selectedPiece = [r, c];
-        const moves = LinkedEngine.getLegalMoves(board, myColor, r, c);
+        const moves = HostageEngine.getLegalMoves(board, myColor, r, c);
         renderer.setSelected([r, c]);
         renderer.setLegalMoves(moves);
+        updateActionButtons(user);
         return;
       }
 
       // Invalid move
-      document.getElementById('game-error').textContent = result.error || 'Invalid move.';
+      document.getElementById('game-error').textContent = 'Illegal move for this piece.';
       setTimeout(() => {
         const el = document.getElementById('game-error');
         if (el) el.textContent = '';
       }, 2000);
+      updateActionButtons(user);
       return;
     }
 
     // No piece selected — select own piece
     if (board[r][c] && board[r][c].color === myColor) {
       selectedPiece = [r, c];
-      const moves = LinkedEngine.getLegalMoves(board, myColor, r, c);
+      const moves = HostageEngine.getLegalMoves(board, myColor, r, c);
       renderer.setSelected([r, c]);
       renderer.setLegalMoves(moves);
       SoundManager.play('select');  // Play select sound
+      updateActionButtons(user);
+      return;
     }
+
+    updateActionButtons(user);
   }
 
   function getColorCSS(color) {
-    const map = { red: '#e94560', blue: '#4ecdc4', green: '#a8e6cf', yellow: '#ffd93d' };
+    const map = {
+      white: '#f3f3f0',
+      black: '#1f1f1f',
+    };
     return map[color] || '#888';
   }
 

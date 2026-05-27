@@ -10,16 +10,26 @@ window.SpectatePage = (() => {
   let chatHistoryHandler = null;
 
   function getUser() {
-    try { return JSON.parse(localStorage.getItem('linked_user')); } catch { return null; }
+    try { return JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user')); } catch { return null; }
   }
 
   async function fetchLiveGame(id) {
     try {
-      const res = await fetch(`/api/games/${id}/live`);
+      // Primary endpoint in current server builds.
+      let res = await fetch(`/api/games/${id}`);
+      if (res.ok) {
+        const data = await res.json();
+        return data.game || null;
+      }
+
+      // Backward compatibility for older deployments that used /live.
+      res = await fetch(`/api/games/${id}/live`);
       if (!res.ok) return null;
       const data = await res.json();
       return data.game || null;
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   }
 
   async function render(id) {
@@ -44,10 +54,9 @@ window.SpectatePage = (() => {
             <div class="review-controls card">
               <div class="rotation-controls" style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap;align-items:center;">
                 <label style="color:var(--text-muted);font-size:0.9rem;">View:</label>
-                <button class="rotate-color-btn-sm" data-color="red">Red</button>
-                <button class="rotate-color-btn-sm" data-color="blue">Blue</button>
-                <button class="rotate-color-btn-sm" data-color="green">Green</button>
-                <button class="rotate-color-btn-sm" data-color="yellow">Yellow</button>
+                <button class="rotate-color-btn-sm" data-color="white">White</button>
+                <button class="rotate-color-btn-sm" data-color="black">Black</button>
+                <button id="spectate-shape-toggle-btn" class="btn-secondary" title="Toggle rhombus/square board">◇ Rhombus</button>
               </div>
             </div>
 
@@ -91,6 +100,19 @@ window.SpectatePage = (() => {
     document.querySelectorAll('.rotate-color-btn-sm').forEach(btn => {
       btn.addEventListener('click', () => renderer.rotateToPlayer(btn.dataset.color));
     });
+
+    const spectateShapeToggleBtn = document.getElementById('spectate-shape-toggle-btn');
+    const syncSpectateShapeLabel = () => {
+      if (!spectateShapeToggleBtn || !renderer) return;
+      spectateShapeToggleBtn.textContent = renderer.isDiamond45() ? '□ Square' : '◇ Rhombus';
+    };
+    syncSpectateShapeLabel();
+    if (spectateShapeToggleBtn) {
+      spectateShapeToggleBtn.addEventListener('click', () => {
+        renderer.toggleDiamond45();
+        syncSpectateShapeLabel();
+      });
+    }
 
     // Fetch initial state
     gameState = await fetchLiveGame(gameId);
@@ -197,7 +219,8 @@ window.SpectatePage = (() => {
 
   function formatMove(move) {
     if (move.event === 'resigned') return `${move.username} resigned`;
-    if (move.event === 'timeout')  return `${move.username} timed out`;
+    if (move.event === 'eliminated') return `${String(move.color || '').toUpperCase()} eliminated (${move.reason || 'timeout'})`;
+    if (move.event === 'turnSkipped') return `${String(move.color || '').toUpperCase()} turn skipped (${move.reason || 'timeout'})`;
     if (move.event === 'draw')     return 'Draw agreed';
     if (move.from && move.to)      return `${move.username} (${move.color}): [${move.from}] → [${move.to}]`;
     return 'Event';
@@ -206,9 +229,6 @@ window.SpectatePage = (() => {
   function renderGameInfo(game) {
     const panel = document.getElementById('game-info-panel');
     if (!panel) return;
-
-    const COLORS = ['red', 'blue', 'green', 'yellow'];
-    const activePlayers = (game.players || []).filter(p => !(game.eliminatedColors || []).includes(p.color));
 
     const playersHtml = (game.players || []).map(p => {
       const isWinner   = p.color === game.winner;
@@ -229,11 +249,17 @@ window.SpectatePage = (() => {
       ? (game.winner === 'draw' ? 'Result: Draw' : `Winner: ${game.winner}`)
       : `Turn ${game.turnCount}`;
 
+    let clockLine = '';
+    if (game.timerMode === 'total') clockLine = `${game.timerValue}m total`;
+    else if (game.timerMode === 'perTurn') clockLine = `${game.timerValue}s/turn`;
+    else if (game.timerMode === 'chess') clockLine = game.timeControl?.label || `${Math.floor((game.timerValue || 0) / 60)}+0`;
+
     panel.innerHTML = `
       <h3>Game Information</h3>
       <div class="info-grid">
         <div class="info-item"><strong>Game:</strong> ${game.name || 'N/A'}</div>
         <div class="info-item"><strong>Status:</strong> ${statusLine}</div>
+        <div class="info-item"><strong>Clock:</strong> ${clockLine || 'None'}</div>
         <div class="info-item"><strong>Moves:</strong> ${(game.moveHistory || []).length}</div>
         <div class="info-item"><strong>Players:</strong>
           <div class="players-list">${playersHtml}</div>

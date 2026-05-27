@@ -1,0 +1,49 @@
+{
+  "id": "6c93c1d9-6c09-454b-97b1-eab16860ea8e",
+  "name": "ss",
+  "players": [
+    {
+      "id": "U1gFWwMbTV",
+      "color": "white",
+      "username": "testman2"
+    },
+    {
+      "id": "MWTXX6ormy",
+      "color": "black",
+      "username": "ikemnkur@gmail.com"
+    }
+  ],
+  "status": "finished",
+  "winner": "draw",
+  "moveHistory": [
+    {
+      "to": [
+        2,
+        2
+      ],
+      "from": [
+        2,
+        1
+      ],
+      "turn": 1,
+      "color": "white",
+      "username": "testman2",
+      "timestamp": 1779683336239
+    },
+    {
+      "turn": 2,
+      "color": "black",
+      "username": "ikemnkur@gmail.com",
+      "from": [
+        6,
+        5
+      ],
+      "to": [
+        6,
+        4
+      ],
+      "timestamp": 1779683338772
+    }
+  ],
+  "updatedAt": "2026-05-25T04:28:59.283Z"
+}

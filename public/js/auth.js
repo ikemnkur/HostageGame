@@ -6,9 +6,9 @@ window.AuthPage = (() => {
     const app = document.getElementById('app');
     app.innerHTML = `
       <div class="auth-page">
-        <div class="logo">♟🔗♟</div>
-        <h1>Linked</h1>
-        <p class="subtitle">A 4-player strategy board game</p>
+        <div class="logo">♔♕</div>
+        <h1>Hostage</h1>
+        <p class="subtitle">A chess-inspired rescue game</p>
 
         <div class="auth-tabs">
           <button class="auth-tab active" id="tab-login"  onclick="AuthPage._showTab('login')">Sign In</button>
@@ -83,7 +83,7 @@ window.AuthPage = (() => {
 
     // Pre-fill login from localStorage
     try {
-      const saved = JSON.parse(localStorage.getItem('linked_user'));
+      const saved = JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user'));
       if (saved?.username) document.getElementById('login-input').value = saved.username;
     } catch {}
 
@@ -147,7 +147,8 @@ window.AuthPage = (() => {
         return;
       }
 
-      localStorage.setItem('linked_user', JSON.stringify(data.user));
+      localStorage.setItem('hostage_user', JSON.stringify(data.user));
+      localStorage.setItem('HostageChess_user', JSON.stringify(data.user));
       window.App.navigate('/lobby');
     } catch {
       errorEl.textContent = 'Network error. Please try again.';
@@ -206,7 +207,8 @@ window.AuthPage = (() => {
         document.getElementById('verify-email-display').textContent = email;
         document.getElementById('verify-panel').style.display = '';
       } else {
-        localStorage.setItem('linked_user', JSON.stringify(data.user));
+        localStorage.setItem('hostage_user', JSON.stringify(data.user));
+        localStorage.setItem('HostageChess_user', JSON.stringify(data.user));
         window.App.navigate('/lobby');
       }
     } catch {

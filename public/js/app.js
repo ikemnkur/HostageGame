@@ -20,9 +20,9 @@ window.App = (() => {
     if (path === '/lobby') {
       LobbyPage.render();
       currentCleanup = LobbyPage.cleanup;
-    } else if (path === '/hostage-lab') {
-      HostageLabPage.render();
-      currentCleanup = HostageLabPage.cleanup;
+    } else if (path === '/experimental-mode' || path === '/hostage-lab') {
+      ExperimentalModePage.render();
+      currentCleanup = ExperimentalModePage.cleanup;
     } else if (path === '/practice') {
       PracticePage.render();
       currentCleanup = PracticePage.cleanup;

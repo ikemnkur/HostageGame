@@ -9,7 +9,7 @@ window.ReviewPage = (() => {
   let boardStates = [];
 
   function getUser() {
-    try { return JSON.parse(localStorage.getItem('linked_user')); } catch { return null; }
+    try { return JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user')); } catch { return null; }
   }
 
   async function fetchGameHistory(gameId) {
@@ -41,7 +41,12 @@ window.ReviewPage = (() => {
         <div class="review-body">
          <div class="review-right">
             <div class="move-history-panel card">
-              <h3>Move History</h3>
+              <div class="move-log-header">
+                <h3>Move History</h3>
+                <div class="move-log-actions">
+                  <button id="review-copy-positions-btn" class="btn-sm" title="Copy board positions CSV">♟ Copy Positions</button>
+                </div>
+              </div>
               <div class="move-list" id="move-list">
                 <p>Loading moves...</p>
               </div>
@@ -73,15 +78,15 @@ window.ReviewPage = (() => {
               </div>
               <div class="rotation-controls" style="margin-top: 8px; display: flex; gap: 6px; justify-content: center; flex-wrap: wrap;">
                 <label style="color: var(--text-muted); font-size: 0.9rem;">View:</label>
-                <button class="rotate-color-btn-sm" data-color="red">Red</button>
-                <button class="rotate-color-btn-sm" data-color="blue">Blue</button>
-                <button class="rotate-color-btn-sm" data-color="green">Green</button>
-                <button class="rotate-color-btn-sm" data-color="yellow">Yellow</button>
+                <button class="rotate-color-btn-sm" data-color="white">White</button>
+                <button class="rotate-color-btn-sm" data-color="black">Black</button>
+                <button id="review-shape-toggle-btn" class="btn-secondary" title="Toggle rhombus/square board">◇ Rhombus</button>
               </div>
             </div>
 
             <div class="game-info-panel card">
               <h3>Game Information</h3>
+              <div id="review-outcome-details" class="card" style="display:none; margin-bottom:10px; padding:10px 12px;"></div>
               <div id="game-info-content">Loading...</div>
             </div>
           </div>
@@ -115,24 +120,24 @@ window.ReviewPage = (() => {
     
     // Build board states for each move
     boardStates = [];
-    let board = LinkedEngine.createStartingBoard();
-    boardStates.push(LinkedEngine.cloneBoard(board));
+    let board = HostageEngine.createStartingBoard();
+    boardStates.push(HostageEngine.cloneBoard(board));
 
     moveHistory.forEach((move, index) => {
       if (move.from && move.to) {
-        const result = LinkedEngine.processMove(board, move.color, move.from, move.to);
+        const result = HostageEngine.processMove(board, move.color, move.from, move.to);
         if (result.valid) {
           board = result.board;
-          boardStates.push(LinkedEngine.cloneBoard(board));
+          boardStates.push(HostageEngine.cloneBoard(board));
         } else {
           // If move is invalid in engine, try to apply it manually (for backwards compatibility)
           board[move.to[0]][move.to[1]] = board[move.from[0]][move.from[1]];
           board[move.from[0]][move.from[1]] = null;
-          boardStates.push(LinkedEngine.cloneBoard(board));
+          boardStates.push(HostageEngine.cloneBoard(board));
         }
       } else {
         // Non-move events (resign, timeout, etc.)
-        boardStates.push(LinkedEngine.cloneBoard(board));
+        boardStates.push(HostageEngine.cloneBoard(board));
       }
     });
 
@@ -154,8 +159,12 @@ window.ReviewPage = (() => {
     if (index > 0 && moveHistory[index - 1]) {
       const move = moveHistory[index - 1];
       if (move.from && move.to) {
-        renderer.setSelected(move.to);
+        renderer.setLastMove(move.from, move.to);
+      } else {
+        renderer.clearLastMove();
       }
+    } else {
+      renderer.clearLastMove();
     }
 
     updateMoveIndicator();
@@ -174,7 +183,8 @@ window.ReviewPage = (() => {
 
   function formatMove(move) {
     if (move.event === 'resigned') return `${move.username} resigned`;
-    if (move.event === 'timeout') return `${move.username} timed out`;
+    if (move.event === 'eliminated') return `${String(move.color || '').toUpperCase()} eliminated (${move.reason || 'timeout'})`;
+    if (move.event === 'turnSkipped') return `${String(move.color || '').toUpperCase()} turn skipped (${move.reason || 'timeout'})`;
     if (move.event === 'draw') return 'Draw agreed';
     if (move.from && move.to) {
       return `${move.username} (${move.color}): [${move.from}] → [${move.to}]`;
@@ -257,6 +267,39 @@ window.ReviewPage = (() => {
         </div>
       </div>
     `;
+
+    renderOutcomeDetails();
+  }
+
+  function renderOutcomeDetails() {
+    const panel = document.getElementById('review-outcome-details');
+    if (!panel || !gameHistory) return;
+
+    if (gameHistory.status !== 'finished') {
+      panel.style.display = 'none';
+      panel.innerHTML = '';
+      return;
+    }
+
+    const pts = gameHistory.points || { white: 0, black: 0 };
+    const margin = Math.abs((pts.white || 0) - (pts.black || 0));
+    const result = gameHistory.result || {};
+    const reason = result.reason || 'Game finished by rules resolution.';
+    const resultType = result.type || (gameHistory.winner === 'draw' ? 'draw' : 'win');
+
+    let verdict = 'Game complete';
+    if (gameHistory.winner === 'draw') {
+      verdict = resultType === 'null' ? 'Null game' : 'Draw';
+    } else if (gameHistory.winner) {
+      verdict = `${String(gameHistory.winner).toUpperCase()} won`;
+    }
+
+    panel.style.display = 'block';
+    panel.innerHTML = `
+      <div style="font-weight:700; margin-bottom:4px;">Outcome: ${verdict}</div>
+      <div style="font-size:13px; opacity:0.92; margin-bottom:2px;">Reason: ${reason}</div>
+      <div style="font-size:13px; opacity:0.92;">Score: White ${pts.white} - Black ${pts.black} (margin ${margin} or ${Math.floor(Math.max(pts.white, pts.black) / Math.min(pts.white, pts.black)) * 100}% > 50%)</div>
+    `;
   }
 
   function setupControls() {
@@ -267,6 +310,8 @@ window.ReviewPage = (() => {
     const playBtn = document.getElementById('play-btn');
     const pauseBtn = document.getElementById('pause-btn');
     const speedSelect = document.getElementById('speed-select');
+    const copyPositionsBtn = document.getElementById('review-copy-positions-btn');
+    const shapeToggleBtn = document.getElementById('review-shape-toggle-btn');
 
     firstBtn.addEventListener('click', () => {
       stopAutoPlay();
@@ -295,6 +340,22 @@ window.ReviewPage = (() => {
     pauseBtn.addEventListener('click', () => {
       stopAutoPlay();
     });
+
+    if (copyPositionsBtn) {
+      copyPositionsBtn.addEventListener('click', () => copyReviewBoardPositions());
+    }
+
+    const syncShapeLabel = () => {
+      if (!shapeToggleBtn || !renderer) return;
+      shapeToggleBtn.textContent = renderer.isDiamond45() ? '□ Square' : '◇ Rhombus';
+    };
+    syncShapeLabel();
+    if (shapeToggleBtn) {
+      shapeToggleBtn.addEventListener('click', () => {
+        renderer.toggleDiamond45();
+        syncShapeLabel();
+      });
+    }
 
     // Rotation controls
     document.querySelectorAll('.rotate-color-btn-sm').forEach(btn => {
@@ -369,6 +430,47 @@ window.ReviewPage = (() => {
     const pauseBtn = document.getElementById('pause-btn');
     playBtn.style.display = 'inline-block';
     pauseBtn.style.display = 'none';
+  }
+
+  function pieceToToken(piece) {
+    if (!piece) return '';
+    const prefix = piece.color === 'white' ? 'W' : 'B';
+    const map = {
+      king: 'King',
+      queen: 'Queen',
+      bishop: 'Bishop',
+      knight: 'Knight',
+      pawn: 'Pawn',
+      rook: 'Rook',
+      fort: 'Fort',
+    };
+    return `${prefix}${map[piece.type] || 'Pawn'}`;
+  }
+
+  function boardToCsv(board) {
+    if (!board || !Array.isArray(board)) return '';
+    const lines = [];
+    for (let r = 0; r < 8; r++) {
+      const row = [];
+      for (let c = 0; c < 8; c++) row.push(pieceToToken(board[r]?.[c] || null));
+      lines.push(row.join(','));
+    }
+    return lines.join('\n');
+  }
+
+  async function copyReviewBoardPositions() {
+    const activeBoard = boardStates[currentMoveIndex] || boardStates[0] || null;
+    try {
+      const text = boardToCsv(activeBoard);
+      await navigator.clipboard.writeText(text);
+      if (typeof Toast !== 'undefined' && Toast.success) {
+        Toast.success('Board positions copied as CSV!', 2000);
+      }
+    } catch {
+      if (typeof Toast !== 'undefined' && Toast.error) {
+        Toast.error('Could not copy board positions.', 2500);
+      }
+    }
   }
 
   function cleanup() {

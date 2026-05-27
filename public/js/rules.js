@@ -7,112 +7,196 @@ window.RulesPage = (() => {
       <div class="rules-page">
         <div class="rules-header">
           <button id="back-btn" class="btn-secondary">← Back</button>
-          <h1>How to Play Linked</h1>
+          <h1>How to Play Hostage</h1>
         </div>
 
         <div class="rules-content card">
-          <section class="rules-section">
-            <h2>🎯 Objective</h2>
-            <p>Be the first to occupy the <strong>center 4 squares</strong> of the board with at least <strong>3 of your pieces</strong> for <strong>2 consecutive turns</strong>.</p>
+          <section class="rules-hero">
+            <div class="rules-hero-copy">
+              <p class="rules-kicker">Chess-inspired rescue game</p>
+              <p class="rules-summary">The queen starts stranded behind enemy lines. Escort and recover her, then return your royals to your home square while denying your opponent's plan.</p>
+              <div class="rules-facts">
+                <div class="rules-fact"><span>Board</span><strong>8×8 rhombus</strong></div>
+                <div class="rules-fact"><span>Home square</span><strong>A1 for White / H8 for Black</strong></div>
+                <div class="rules-fact"><span>Round check</span><strong>Resolved after Black moves</strong></div>
+              </div>
+            </div>
+
+            <div class="rules-hero-diagram">
+              <div class="diagram-labels">
+                <span>White home</span>
+                <span>Black home</span>
+              </div>
+              <div class="setup-diagram">
+                <div class="diag-piece queen black" style="grid-column: 1; grid-row: 1;">Q</div>
+                <div class="diag-piece king white" style="grid-column: 2; grid-row: 2;">K</div>
+                <div class="diag-piece queen white" style="grid-column: 8; grid-row: 8;">Q</div>
+                <div class="diag-piece king black" style="grid-column: 7; grid-row: 7;">K</div>
+              </div>
+              <p class="diagram-caption">The queen begins separated. The rescue is complete when the king and queen reunite at home.</p>
+            </div>
           </section>
 
           <section class="rules-section">
-            <h2>🎲 Setup</h2>
-            <ul>
-              <li>8×8 checkerboard</li>
-              <li>2-4 players: <span class="color-tag red">Red</span>, <span class="color-tag blue">Blue</span>, <span class="color-tag green">Green</span>, <span class="color-tag yellow">Yellow</span></li>
-              <li>6 pieces per player, starting on their back row (edge of the board)</li>
-              <li><strong>Red</strong> starts at the top, <strong>Blue</strong> at the bottom, <strong>Green</strong> on the left, <strong>Yellow</strong> on the right</li>
-            </ul>
+            <h2>🎯 Core Goal</h2>
+            <div class="rule-callout">
+              <p><strong>Strategic objective:</strong> recover your queen and score the stronger round position by the time the round resolves.</p>
+              <ul>
+                <li><strong>White home/castle square:</strong> A1</li>
+                <li><strong>Black home/castle square:</strong> H8</li>
+                <li><strong>Round resolution:</strong> after every Black move, the game evaluates score and outcome.</li>
+              </ul>
+            </div>
           </section>
 
           <section class="rules-section">
-            <h2>🚶 Movement</h2>
+            <h2>🎲 Starting Position</h2>
+            <p>The board uses the CSV opening layout below. The king starts in front, while the queen starts stranded in the opposite corner.</p>
+            <div class="csv-block">
+              <code>BQueen,WKnight,WBishop,Wpawn,Wpawn,,,,<br>
+WBishop,WKing,Wpawn,Wpawn,,,,<br>
+WKnight,Wpawn,,,,,,<br>
+Wpawn,Wpawn,,,,,,Bpawn,<br>
+Wpawn,,,,,,Bpawn,Bpawn<br>
+,,,,,,Bpawn,BKnight<br>
+,,,,Bpawn,Bpawn,BKing,BBishop<br>
+,,,Bpawn,Bpawn,BBishop,BKnight,WQueen</code>
+            </div>
+          </section>
+
+          <section class="rules-section">
+            <h2>♟️ Piece Examples</h2>
             <div class="move-types">
-              <div class="move-card">
-                <h3>Walk (Orthogonal)</h3>
-                <p><strong>Direction:</strong> Up, Down, Left, or Right (one square)</p>
-                <p><strong>Condition:</strong> Target square must be empty</p>
+              <div class="move-card move-card-compact">
+                <h3>King</h3>
+                <div class="piece-line"><span class="piece-chip white">K</span><span>Moves 1 or 2 squares.</span></div>
+                <div class="piece-example example-row">
+                  <span class="example-start">K</span><span class="arrow">→</span><span class="example-step">1</span><span class="arrow">→</span><span class="example-step">2</span>
+                </div>
+                <p>No castling. The king is the escort piece for the rescue route and the key condition for keeping your queen protected.</p>
               </div>
-              <div class="move-card">
-                <h3>Attack (Diagonal)</h3>
-                <p><strong>Direction:</strong> Diagonal (one square)</p>
-                <p><strong>Condition:</strong> Target square has an enemy piece</p>
-                <p><strong>Effect:</strong> The enemy is <em>pushed</em> to the nearest free square that is NOT adjacent to your piece's starting position</p>
+
+              <div class="move-card move-card-compact">
+                <h3>Queen</h3>
+                <div class="piece-line"><span class="piece-chip white queen-chip">Q</span><span>Moves 1 square like a king.</span></div>
+                <div class="piece-example example-grid">
+                  <span></span><span class="diag-dot"></span><span></span>
+                  <span class="diag-dot"></span><span class="example-center">Q</span><span class="diag-dot"></span>
+                  <span></span><span class="diag-dot"></span><span></span>
+                </div>
+                <p>Queen can only capture on her own home side, and can only be captured on her own home side. On the enemy side and on the neutral diagonal (A1, B2, C3, D4, E5, F6, G7, H8), she is unarmed and cannot be captured.</p>
               </div>
-              <div class="move-card">
-                <h3>Hop (Diagonal)</h3>
-                <p><strong>Direction:</strong> Diagonal (one square) over any piece</p>
-                <p><strong>Condition:</strong> Landing square must be empty AND adjacent to one of your other pieces (it must connect you to your group)</p>
+
+              <div class="move-card move-card-compact">
+                <h3>Pawn</h3>
+                <div class="piece-line"><span class="piece-chip white">P</span><span>Moves like a rook, but only 1 square.</span></div>
+                <div class="piece-example pawn-example">
+                  <div class="pawn-orth">
+                    <span class="move-dot center"></span>
+                    <span class="move-dot up"></span>
+                    <span class="move-dot down"></span>
+                    <span class="move-dot left"></span>
+                    <span class="move-dot right"></span>
+                  </div>
+                  <div class="pawn-capture">
+                    <span class="move-dot diag up-left"></span>
+                    <span class="move-dot diag up-right"></span>
+                    <span class="example-center small">P</span>
+                  </div>
+                </div>
+                <p>Pawn movement is orthogonal by 1 square. Pawn captures are diagonal by 1 square.</p>
               </div>
-              <div class="move-card">
-                <h3>Long Hop (2-Square Diagonal)</h3>
-                <p><strong>Direction:</strong> Two squares diagonally</p>
-                <p><strong>Condition:</strong> Jump over an enemy piece in the middle, landing square empty, and landing connects to a friendly piece</p>
-                <p><strong>Effect:</strong> Enemy piece stays in place (no capture)</p>
+
+              <div class="move-card move-card-compact">
+                <h3>Rook / Fort</h3>
+                <div class="piece-line"><span class="piece-chip black">R</span><span>Slides orthogonally and can push one blocker.</span></div>
+                <div class="piece-example example-row push-example">
+                  <span class="example-start">R</span><span class="arrow">→</span><span class="blocker">X</span><span class="arrow">→</span><span class="push-target">□</span>
+                </div>
+                <div class="piece-example example-row push-example">
+                  <span class="push-target">□</span><span class="arrow">→</span><span class="blocker">R</span><span class="arrow">→</span><span class="example-start">X</span>
+                </div>
+                <p>Rooks cannot capture and cannot be captured. A blocked move can push one piece forward if space remains.</p>
+              </div>
+
+              <div class="move-card move-card-compact">
+                <h3>Bishop / Knight</h3>
+                <div class="piece-line"><span class="piece-chip black">B</span><span>Bishop slides diagonally any distance.</span></div>
+                <div class="piece-line"><span class="piece-chip black">N</span><span>Knight uses standard chess L-jumps.</span></div>
+                <p>Use these pieces to create pressure, forks, and rescue-lane interference.</p>
               </div>
             </div>
           </section>
 
           <section class="rules-section rules-highlight">
-            <h2>🔗 Linking Rule (Core Mechanic)</h2>
-            <p>This is what makes <em>Linked</em> unique:</p>
-            <ul>
-              <li>Every piece <strong>must</strong> be connected to at least one friendly piece</li>
-              <li>Connection = any of the 8 surrounding squares (orthogonal or diagonal)</li>
-              <li><strong>After every move</strong>, any piece that has NO friendly neighbors is <strong>unlinked</strong> and <strong>removed from the board</strong></li>
-              <li>Plan carefully — a single move can cause a chain reaction of unlinked pieces!</li>
-            </ul>
+            <h2>🧪 Experimental Mode Controls</h2>
+            <p><strong>Experimental Mode</strong> is the official sandbox for setup testing and tactical drills.</p>
+            <div class="lab-grid">
+              <div class="lab-card">
+                <h3>Desktop</h3>
+                <p>Shift+click a piece to delete it.</p>
+              </div>
+              <div class="lab-card">
+                <h3>Mobile</h3>
+                <p>Triple-tap a piece to delete it.</p>
+              </div>
+              <div class="lab-card">
+                <h3>Workflow</h3>
+                <p>Add, remove, and reposition pieces until the rescue pattern feels right.</p>
+              </div>
+            </div>
           </section>
 
           <section class="rules-section">
-            <h2>👑 Winning</h2>
+            <h2>🏠 Home / Castle Square</h2>
+            <p>Each side has exactly one home/castle square. Returning royals to home is central to scoring and end-state outcomes.</p>
+            <div class="home-grid">
+              <div class="home-box white-home">
+                <strong>White home</strong>
+                <span>A1</span>
+              </div>
+              <div class="home-box black-home">
+                <strong>Black home</strong>
+                <span>H8</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="rules-section">
+            <h2>👑 Win / Loss / Draw / Null</h2>
             <ol>
-              <li>At the <strong>end of your turn</strong>, you must have at least <strong>3 pieces</strong> on the <strong>center 4 squares</strong></li>
-              <li>Hold that position through <strong>one full round</strong> (all other players take their turns)</li>
-              <li>If you still control the center at the start of your next turn → <strong>You win!</strong></li>
-              <li>If you lose control (enemy pushes you off or you move), the countdown resets</li>
+              <li><strong>Win:</strong> after round scoring, one side has higher points.</li>
+              <li><strong>Loss:</strong> you finish the round with fewer points.</li>
+              <li><strong>Draw:</strong> scores are equal, or both queens return home in the same round, or all royalty is eliminated.</li>
+              <li><strong>Null:</strong> both queens are eliminated behind enemy lines before either has crossed back to its own side.</li>
             </ol>
           </section>
 
           <section class="rules-section">
-            <h2>⏱️ Timer Options</h2>
-            <p>Game creators can optionally enable a timer:</p>
+            <h2>📊 Simple Score System</h2>
             <ul>
-              <li><strong>Total Time:</strong> Each player gets X minutes for the entire game (chess-clock style)
-              <br> * Elimination: When a player's time runs out, they are eliminated and their pieces are removed
-              </li>
-              <li><strong>Per Turn:</strong> Each move must be made within Y seconds (minimum 10s, resets each turn)
-              <br> * Skip: When a player's time runs out, their turn is skipped and the opponent's turn begins
-              </li>
+              <li><strong>+10</strong>: all your surviving royals are on your home square.</li>
+              <li><strong>+5</strong>: your king reaches the enemy home square.</li>
+              <li><strong>+3</strong>: your king is gone, but your queen has returned home.</li>
+              <li><strong>-10</strong>: your king and queen are both eliminated.</li>
+              <li><strong>-5</strong>: enemy king reaches your home square.</li>
+              <li><strong>Special swing:</strong> when a side's king is dead and its queen is safely home, the opposing side can take an additional 3-point penalty depending on the board state.</li>
             </ul>
           </section>
 
           <section class="rules-section">
-            <h2>💡 Strategy Tips</h2>
+            <h2>💡 Practical Play Notes</h2>
             <ul>
-              <li><strong>Stay connected</strong> — isolated pieces die! Keep your group tight.</li>
-              <li><strong>Control the center</strong> — but don't commit too early or you'll be vulnerable to attacks.</li>
-              <li><strong>Use attacks strategically</strong> — push enemies away from the center or break their formations.</li>
-              <li><strong>Plan ahead</strong> — think about how your move affects not just you, but your opponents' next moves.</li>
-              <li><strong>Practice mode</strong> — experiment with piece placement and test strategies before playing!</li>
-            </ul>
-          </section>
-
-          <section class="rules-section">
-            <h2>🎮 Practice Room</h2>
-            <p>The practice room lets you freely place, move, and remove pieces of any color with no rules enforcement. Perfect for:</p>
-            <ul>
-              <li>Learning how pieces move</li>
-              <li>Testing theories and strategies</li>
-              <li>Understanding the linking mechanic</li>
-              <li>Setting up specific board positions to analyze</li>
+              <li>Protect your king first: queen safety and capture rights depend on king survival.</li>
+              <li>Use rook pushes to create lanes and disrupt enemy escorts.</li>
+              <li>Coordinate pawn diagonals for tactical captures around the neutral band.</li>
+              <li>Track round timing and clock format (including negative increment controls like 3-1).</li>
             </ul>
           </section>
 
           <div class="rules-footer">
-            <button id="start-playing-btn">Start Playing</button>
-            <button id="try-practice-btn" class="btn-secondary">Try Practice Room</button>
+            <button id="start-playing-btn">Go to Lobby</button>
+            <button id="try-practice-btn" class="btn-secondary">Open Experimental Mode</button>
           </div>
         </div>
       </div>
@@ -127,12 +211,12 @@ window.RulesPage = (() => {
       window.App.navigate(user ? '/lobby' : '/');
     });
     document.getElementById('try-practice-btn').addEventListener('click', () => {
-      window.App.navigate('/practice');
+      window.App.navigate('/experimental-mode');
     });
   }
 
   function getUser() {
-    try { return JSON.parse(localStorage.getItem('linked_user')); } catch { return null; }
+    try { return JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user')); } catch { return null; }
   }
 
   function cleanup() {

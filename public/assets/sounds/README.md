@@ -1,4 +1,4 @@
-# Sound Assets for Linked Game
+# Sound Assets for HostageChess Game
 
 Place the following sound files in the `public/assets/sounds/` directory:
 

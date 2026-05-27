@@ -5,7 +5,7 @@ window.LobbyPage = (() => {
   let lobbyUpdateHandler = null;
 
   function getUser() {
-    try { return JSON.parse(localStorage.getItem('linked_user')); } catch { return null; }
+    try { return JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user')); } catch { return null; }
   }
 
   async function fetchGames() {
@@ -25,14 +25,14 @@ window.LobbyPage = (() => {
       <div class="lobby-page">
         <div class="lobby-header">
           <div>
-            <h1>Lobby</h1>
+            <h1>Hostage Chess Lobby</h1>
             <p class="user-info">Playing as <strong>${user.username}</strong></p>
           </div>
           <div class="lobby-actions">
             <button id="show-create-form-btn">Create Game</button>
             <button id="stats-btn" class="btn-secondary">Stats</button>
-            <button id="practice-btn" class="btn-secondary">Practice Room</button>
-            <button id="hostage-lab-btn" class="btn-secondary">Hostage Lab</button>
+            <button id="practice-btn" class="btn-secondary">Practice</button>
+            <button id="experimental-btn" class="btn-secondary">Experimental Mode</button>
             <button id="rules-btn" class="btn-secondary">How to Play</button>
             <button id="logout-btn" class="btn-secondary">Logout</button>
           </div>
@@ -47,19 +47,12 @@ window.LobbyPage = (() => {
               <input type="text" id="cg-name" placeholder="My Game" maxlength="30" />
             </label>
             <label>
-              Players
-              <select id="cg-players">
-                <option value="2">2 Players</option>
-                <option value="3">3 Players</option>
-                <option value="4" selected>4 Players</option>
-              </select>
-            </label>
-            <label>
               Timer Mode
               <select id="cg-timer-mode">
                 <option value="none">No Timer</option>
                 <option value="total">Total Time per Player</option>
                 <option value="perTurn">Time per Turn</option>
+                <option value="chess">Chess Clock (base±inc)</option>
               </select>
             </label>
             <div id="cg-timer-value-wrap" style="display:none">
@@ -67,6 +60,19 @@ window.LobbyPage = (() => {
                 <span id="cg-timer-value-label">Minutes</span>
                 <input type="number" id="cg-timer-value" min="1" max="60" value="5" />
               </label>
+            </div>
+            <div id="cg-time-control-wrap" style="display:none">
+              <label>
+                Time Control
+                <input type="text" id="cg-time-control" placeholder="1+1, 5+0, 3-1, 1m+1s" maxlength="12" />
+              </label>
+              <div class="time-preset-row" id="cg-time-presets">
+                <button type="button" class="btn-secondary time-preset-btn" data-tc="1+0">1+0</button>
+                <button type="button" class="btn-secondary time-preset-btn" data-tc="1+1">1+1</button>
+                <button type="button" class="btn-secondary time-preset-btn" data-tc="3+0">3+0</button>
+                <button type="button" class="btn-secondary time-preset-btn" data-tc="3-1">3-1</button>
+                <button type="button" class="btn-secondary time-preset-btn" data-tc="5+0">5+0</button>
+              </div>
             </div>
             <div class="create-form-actions">
               <button type="submit">Create</button>
@@ -92,16 +98,24 @@ window.LobbyPage = (() => {
     // Timer mode toggle
     document.getElementById('cg-timer-mode').addEventListener('change', (e) => {
       const wrap = document.getElementById('cg-timer-value-wrap');
+      const chessWrap = document.getElementById('cg-time-control-wrap');
       const label = document.getElementById('cg-timer-value-label');
       const input = document.getElementById('cg-timer-value');
       if (e.target.value === 'none') {
         wrap.style.display = 'none';
+        chessWrap.style.display = 'none';
       } else {
-        wrap.style.display = 'block';
+        if (e.target.value === 'chess') {
+          wrap.style.display = 'none';
+          chessWrap.style.display = 'block';
+        } else {
+          wrap.style.display = 'block';
+          chessWrap.style.display = 'none';
+        }
         if (e.target.value === 'total') {
           label.textContent = 'Minutes (1-60)';
           input.min = 1; input.max = 60; input.value = 5;
-        } else {
+        } else if (e.target.value === 'perTurn') {
           label.textContent = 'Seconds per turn (10-300)';
           input.min = 10; input.max = 300; input.value = 30;
         }
@@ -112,12 +126,19 @@ window.LobbyPage = (() => {
       e.preventDefault();
       createGame();
     });
+    document.querySelectorAll('.time-preset-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const input = document.getElementById('cg-time-control');
+        if (input) input.value = btn.dataset.tc || '';
+      });
+    });
     document.getElementById('stats-btn').addEventListener('click', () => window.App.navigate('/stats'));
     document.getElementById('practice-btn').addEventListener('click', () => window.App.navigate('/practice'));
-    document.getElementById('hostage-lab-btn').addEventListener('click', () => window.App.navigate('/hostage-lab'));
+    document.getElementById('experimental-btn').addEventListener('click', () => window.App.navigate('/experimental-mode'));
     document.getElementById('rules-btn').addEventListener('click', () => window.App.navigate('/rules'));
     document.getElementById('logout-btn').addEventListener('click', () => {
-      localStorage.removeItem('linked_user');
+      localStorage.removeItem('hostage_user');
+      localStorage.removeItem('HostageChess_user');
       window.App.navigate('/');
     });
 
@@ -151,7 +172,7 @@ window.LobbyPage = (() => {
     function renderGameCard(g) {
       const maxP = g.maxPlayers || 4;
       const dots = [];
-      const COLORS = ['red', 'blue', 'green', 'yellow'];
+      const COLORS = ['white', 'black'];
       for (let i = 0; i < maxP; i++) {
         if (g.players[i]) {
           dots.push(`<span class="player-dot filled ${g.players[i].color}"></span>`);
@@ -168,6 +189,10 @@ window.LobbyPage = (() => {
       let timerBadge = '';
       if (g.timerMode === 'total') timerBadge = `<span class="timer-badge">${g.timerValue}m total</span>`;
       else if (g.timerMode === 'perTurn') timerBadge = `<span class="timer-badge">${g.timerValue}s/turn</span>`;
+      else if (g.timerMode === 'chess') {
+        const tc = g.timeControl?.label || `${Math.floor((g.timerValue || 0) / 60)}+0`;
+        timerBadge = `<span class="timer-badge">${tc}</span>`;
+      }
 
       let statusLabel = g.status === 'playing' ? '🔴 Live' : `${g.playerCount}/${maxP} players · waiting`;
 
@@ -225,20 +250,32 @@ window.LobbyPage = (() => {
     if (!user) return;
 
     const gameName = (document.getElementById('cg-name').value || '').trim();
-    const maxPlayers = parseInt(document.getElementById('cg-players').value) || 4;
+    const maxPlayers = 2;
     const timerMode = document.getElementById('cg-timer-mode').value;
     const timerValue = parseInt(document.getElementById('cg-timer-value').value) || 0;
+    const timeControl = (document.getElementById('cg-time-control').value || '').trim();
+
+    if (timerMode === 'chess') {
+      const ok = /^(\d{1,2})\s*m?\s*[+-]\s*(\d{1,2})\s*s?$/i.test(timeControl);
+      if (!ok) {
+        Toast.error('Use format like 1+1, 5+0, 3-1, or 1m+1s.', 3500);
+        return;
+      }
+    }
 
     try {
       const res = await fetch('/api/games', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, gameName, maxPlayers, timerMode, timerValue }),
+        body: JSON.stringify({ userId: user.id, gameName, maxPlayers, timerMode, timerValue, timeControl }),
       });
       if (res.ok) {
         document.getElementById('create-form-wrap').style.display = 'none';
         document.getElementById('show-create-form-btn').disabled = false;
         loadGames();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        Toast.error(data.error || 'Could not create game.', 3000);
       }
     } catch {}
   }

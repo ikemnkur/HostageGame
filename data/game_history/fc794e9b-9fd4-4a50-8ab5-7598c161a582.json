@@ -1,0 +1,105 @@
+{
+  "id": "fc794e9b-9fd4-4a50-8ab5-7598c161a582",
+  "name": "ccc",
+  "players": [
+    {
+      "id": "U1gFWwMbTV",
+      "color": "white",
+      "username": "testman2"
+    },
+    {
+      "id": "MWTXX6ormy",
+      "color": "black",
+      "username": "ikemnkur@gmail.com"
+    }
+  ],
+  "status": "finished",
+  "winner": "black",
+  "moveHistory": [
+    {
+      "to": [
+        3,
+        2
+      ],
+      "from": [
+        3,
+        1
+      ],
+      "turn": 1,
+      "color": "white",
+      "username": "testman2",
+      "timestamp": 1779822535183
+    },
+    {
+      "to": [
+        5,
+        4
+      ],
+      "from": [
+        6,
+        4
+      ],
+      "turn": 2,
+      "color": "black",
+      "username": "ikemnkur@gmail.com",
+      "timestamp": 1779822540133
+    },
+    {
+      "to": [
+        2,
+        2
+      ],
+      "from": [
+        2,
+        1
+      ],
+      "turn": 3,
+      "color": "white",
+      "username": "testman2",
+      "timestamp": 1779822545038
+    },
+    {
+      "to": [
+        5,
+        5
+      ],
+      "from": [
+        6,
+        5
+      ],
+      "turn": 4,
+      "color": "black",
+      "username": "ikemnkur@gmail.com",
+      "timestamp": 1779822547579
+    },
+    {
+      "to": [
+        3,
+        1
+      ],
+      "from": [
+        1,
+        1
+      ],
+      "turn": 5,
+      "color": "white",
+      "username": "testman2",
+      "timestamp": 1779822551220
+    },
+    {
+      "turn": 6,
+      "color": "black",
+      "username": "ikemnkur@gmail.com",
+      "from": [
+        7,
+        5
+      ],
+      "to": [
+        3,
+        1
+      ],
+      "timestamp": 1779822556526
+    }
+  ],
+  "updatedAt": "2026-05-26T19:09:16.706Z"
+}

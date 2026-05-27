@@ -47,7 +47,7 @@ module.exports = function createAdminRouter(deps = {}) {
   } = deps;
 
   const router  = express.Router();
-  const SECRET  = process.env.ADMIN_SECRET || 'linked-admin-default-secret';
+  const SECRET  = process.env.ADMIN_SECRET || 'hostage-chess-admin-default-secret';
   const TOKEN_TTL = 24 * 60 * 60 * 1000; // 24 h
   const COOKIE  = '__admin_tok';
 

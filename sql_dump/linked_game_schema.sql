@@ -1,20 +1,20 @@
 -- ============================================================
---  linked_game — schema creation script
+--  HostageChessGame — schema creation script
 --  Run against a fresh MySQL 8+ database:
---    mysql -u root -p linked_game < linked_game_schema.sql
+--    mysql -u root -p HostageChessGame < HostageChess_game_schema.sql
 -- ============================================================
 
-CREATE DATABASE IF NOT EXISTS `linked_game`
+CREATE DATABASE IF NOT EXISTS `HostageChessGame`
   CHARACTER SET utf8mb4
   COLLATE utf8mb4_unicode_ci;
 
-USE `linked_game`;
+USE `HostageChessGame`;
 
 -- ────────────────────────────────────────────────────────────
---  linked_users
+--  HostageChess_users
 --  Stores player accounts, credentials, and cumulative stats.
 -- ────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS `linked_users` (
+CREATE TABLE IF NOT EXISTS `HostageChess_users` (
   `id`           VARCHAR(36)   NOT NULL,
   `username`     VARCHAR(50)   NOT NULL,
   `password`     VARCHAR(255)  DEFAULT NULL,
@@ -31,11 +31,11 @@ CREATE TABLE IF NOT EXISTS `linked_users` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ────────────────────────────────────────────────────────────
---  linked_games
+--  HostageChess_games
 --  Stores active and finished game records.
 --  Complex state (board, players, history) kept as JSON columns.
 -- ────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS `linked_games` (
+CREATE TABLE IF NOT EXISTS `HostageChess_games` (
   `id`                   VARCHAR(36)                           NOT NULL,
   `name`                 VARCHAR(200)                          NOT NULL,
   `status`               ENUM('waiting','playing','finished')  NOT NULL DEFAULT 'waiting',

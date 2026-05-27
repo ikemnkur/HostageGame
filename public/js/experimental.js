@@ -1,19 +1,6 @@
-/* ─── Hostage Lab (experimental sandbox) ─────────────── */
+/* ─── Experimental Mode (sandbox) ───────────────────── */
 
-window.HostageLabPage = (() => {
-//   const STARTING_CSV = `
-// #Start-----------------------------------------
-// BQueen,WKnight,WBishop,Wpawn,,,,,
-// WBishop,WKing,Wpawn,,,,,
-// WKnight,Wpawn,,,,,,
-// Wpawn,,,,,,,
-// ,,,,,,,Bpawn
-// ,,,,,,Bpawn,BKnight
-// ,,,,,Bpawn,BKing,BBishop
-// ,,,,Bpawn,BBishop,BKnight,WQueen
-// #End-----------------------------------------
-// `;
-
+window.ExperimentalModePage = (() => {
   const STARTING_CSV = `
 #Start-----------------------------------------
 BQueen,WKnight,WBishop,Wpawn,Wpawn,,,,
@@ -38,20 +25,12 @@ Wpawn,,,,,,Bpawn,Bpawn
 
   let renderer = null;
   let board = null;
+  let gameState = null;
   let mode = 'move';
   let selectedSide = 'white';
   let selectedType = 'pawn';
   let selectedPiece = null;
   let recentTap = { key: null, count: 0, ts: 0 };
-
-  const CASTLE_BY_COLOR = {
-    white: [7, 0], // A1 in white view
-    black: [0, 7], // H8 in white view
-  };
-
-  const ORTHO_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-  const DIAG_DIRS = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
-  const KNIGHT_DIRS = [[2, 1], [2, -1], [-2, 1], [-2, -1], [1, 2], [1, -2], [-1, 2], [-1, -2]];
 
   function createEmptyBoard() {
     return Array.from({ length: 8 }, () => Array(8).fill(null));
@@ -59,196 +38,6 @@ Wpawn,,,,,,Bpawn,Bpawn
 
   function clonePiece(piece) {
     return piece ? { ...piece } : null;
-  }
-
-  function inBounds(r, c) {
-    return r >= 0 && r < 8 && c >= 0 && c < 8;
-  }
-
-  function isCastleSquare(r, c, color) {
-    const castle = CASTLE_BY_COLOR[color];
-    return !!castle && castle[0] === r && castle[1] === c;
-  }
-
-  function canShareCastle(moving, target, tr, tc) {
-    if (!moving || !target) return false;
-    if (moving.color !== target.color) return false;
-    const bothRoyal = (
-      (moving.type === 'king' && target.type === 'queen') ||
-      (moving.type === 'queen' && target.type === 'king')
-    );
-    return bothRoyal && isCastleSquare(tr, tc, moving.color);
-  }
-
-  function canLandOnSquare(piece, tr, tc, forCapture = true) {
-    const target = board[tr][tc];
-    if (!target) return true;
-
-    if (piece.type === 'pawn') {
-      if (target.type === 'pawn' && target.color === piece.color && !target.paired) return true;
-      if (forCapture && target.color !== piece.color) return true;
-      if (canShareCastle(piece, target, tr, tc)) return true;
-      return false;
-    }
-
-    if (piece.type === 'queen') {
-      if (canShareCastle(piece, target, tr, tc)) return true;
-      return false;
-    }
-
-    if (piece.type === 'rook' || piece.type === 'fort') {
-      return false;
-    }
-
-    if (target.color === piece.color) {
-      return canShareCastle(piece, target, tr, tc);
-    }
-
-    return true;
-  }
-
-  function pushMoveIfAllowed(moves, piece, tr, tc, forCapture = true) {
-    if (!inBounds(tr, tc)) return;
-    if (!canLandOnSquare(piece, tr, tc, forCapture)) return;
-    moves.push([tr, tc]);
-  }
-
-  function getSlidingMoves(r, c, dirs, piece) {
-    const moves = [];
-    for (const [dr, dc] of dirs) {
-      let tr = r + dr;
-      let tc = c + dc;
-      while (inBounds(tr, tc)) {
-        const target = board[tr][tc];
-        if (!target) {
-          moves.push([tr, tc]);
-          tr += dr;
-          tc += dc;
-          continue;
-        }
-
-        if (target.color !== piece.color && canLandOnSquare(piece, tr, tc, true)) {
-          moves.push([tr, tc]);
-        } else if (target.color === piece.color && canShareCastle(piece, target, tr, tc)) {
-          moves.push([tr, tc]);
-        }
-        break;
-      }
-    }
-    return moves;
-  }
-
-  function getRookOrFortMoves(r, c, piece) {
-    const moves = [];
-    for (const [dr, dc] of ORTHO_DIRS) {
-      let tr = r + dr;
-      let tc = c + dc;
-      while (inBounds(tr, tc)) {
-        if (!board[tr][tc]) {
-          if (!isCastleSquare(tr, tc, piece.color)) moves.push([tr, tc]);
-          tr += dr;
-          tc += dc;
-          continue;
-        }
-
-        const pushR = tr + dr;
-        const pushC = tc + dc;
-        if (inBounds(pushR, pushC) && !board[pushR][pushC] && !isCastleSquare(tr, tc, piece.color)) {
-          moves.push([tr, tc]);
-        }
-        break;
-      }
-    }
-    return moves;
-  }
-
-  function getPawnSingleMoves(r, c, piece) {
-    const moves = [];
-    for (const [dr, dc] of ORTHO_DIRS) {
-      const tr = r + dr;
-      const tc = c + dc;
-      if (!inBounds(tr, tc)) continue;
-      const target = board[tr][tc];
-      if (!target) {
-        moves.push([tr, tc]);
-      } else if (target.type === 'pawn' && target.color === piece.color && !target.paired) {
-        moves.push([tr, tc]);
-      }
-    }
-
-    for (const [dr, dc] of DIAG_DIRS) {
-      const tr = r + dr;
-      const tc = c + dc;
-      if (!inBounds(tr, tc)) continue;
-      const target = board[tr][tc];
-      if (target && target.color !== piece.color) {
-        moves.push([tr, tc]);
-      }
-    }
-
-    return moves;
-  }
-
-  function getLegalMovesForPiece(r, c) {
-    const piece = board[r][c];
-    if (!piece) return [];
-
-    if (piece.type === 'pawn') {
-      if (piece.paired) {
-        const moves = getPawnSingleMoves(r, c, { color: piece.color, type: 'pawn' });
-        return moves.filter(([tr, tc]) => board[tr][tc] === null);
-      }
-      return getPawnSingleMoves(r, c, piece);
-    }
-
-    if (piece.type === 'king') {
-      const moves = [];
-      for (let dr = -2; dr <= 2; dr++) {
-        for (let dc = -2; dc <= 2; dc++) {
-          if (dr === 0 && dc === 0) continue;
-          if (Math.abs(dr) > 2 || Math.abs(dc) > 2) continue;
-          pushMoveIfAllowed(moves, piece, r + dr, c + dc, true);
-        }
-      }
-      return moves;
-    }
-
-    if (piece.type === 'queen') {
-      const moves = [];
-      for (let dr = -1; dr <= 1; dr++) {
-        for (let dc = -1; dc <= 1; dc++) {
-          if (dr === 0 && dc === 0) continue;
-          const tr = r + dr;
-          const tc = c + dc;
-          if (!inBounds(tr, tc)) continue;
-          if (!board[tr][tc] || canShareCastle(piece, board[tr][tc], tr, tc)) moves.push([tr, tc]);
-        }
-      }
-      return moves;
-    }
-
-    if (piece.type === 'rook' || piece.type === 'fort') {
-      return getRookOrFortMoves(r, c, piece);
-    }
-
-    if (piece.type === 'bishop') {
-      return getSlidingMoves(r, c, DIAG_DIRS, piece);
-    }
-
-    if (piece.type === 'knight') {
-      const moves = [];
-      for (const [dr, dc] of KNIGHT_DIRS) {
-        pushMoveIfAllowed(moves, piece, r + dr, c + dc, true);
-      }
-      return moves;
-    }
-
-    return [];
-  }
-
-  function canMoveTo(sr, sc, tr, tc) {
-    const moves = getLegalMovesForPiece(sr, sc);
-    return moves.some(([mr, mc]) => mr === tr && mc === tc);
   }
 
   function tokenToPiece(token) {
@@ -265,20 +54,7 @@ Wpawn,,,,,,Bpawn,Bpawn
   }
 
   function loadBoardFromCsv(csvText) {
-    const b = createEmptyBoard();
-    const lines = String(csvText || '')
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line && !line.startsWith('#'));
-
-    for (let r = 0; r < 8; r++) {
-      const row = (lines[r] || '').split(',');
-      for (let c = 0; c < 8; c++) {
-        b[r][c] = tokenToPiece(row[c] || '');
-      }
-    }
-
-    return b;
+    return HostageEngine.loadBoardFromCsv(csvText);
   }
 
   function pieceToToken(piece) {
@@ -311,25 +87,45 @@ Wpawn,,,,,,Bpawn,Bpawn
     if (el) el.textContent = text;
   }
 
+  function setGameStateFromBoard(nextBoard, keepTurn = 'white') {
+    gameState = {
+      board: nextBoard,
+      turn: keepTurn,
+      moveCount: 0,
+      status: 'playing',
+      result: null,
+      points: { white: 0, black: 0 },
+      queenCrossedToOwnSide: { white: false, black: false },
+    };
+    board = gameState.board;
+  }
+
+  function updateTurnBanner() {
+    const label = document.getElementById('hostage-turn-label');
+    if (!label) return;
+    label.textContent = 'Sandbox: no turns enforced';
+  }
+
   function render() {
     const app = document.getElementById('app');
     app.innerHTML = `
-      <div class="practice-page hostage-lab-page">
+      <div class="practice-page experimental-mode-page hostage-lab-page">
         <div class="game-header" style="justify-content:space-between; display:flex; align-items:center; margin-bottom:16px;">
           <button id="back-to-lobby" class="btn-secondary">← Lobby</button>
-          <h2>Hostage Lab (Experimental)</h2>
+          <h2>Experimental Mode</h2>
           <div></div>
         </div>
 
-        <p class="practice-mode-label">Mode: <strong id="hostage-mode-label">Move Pieces</strong></p>
+        <p class="practice-mode-label">Mode: <strong id="hostage-mode-label">Move Pieces</strong> · <strong id="hostage-turn-label">Turn: WHITE</strong></p>
 
         <div class="practice-controls">
           <button id="hostage-mode-move" class="btn-secondary">Move</button>
           <button id="hostage-mode-place">Place</button>
           <button id="hostage-mode-erase" class="btn-secondary">Erase</button>
-          <button id="hostage-load-opening" class="btn-secondary">Load CSV Opening</button>
+          <button id="hostage-load-opening" class="btn-secondary">Load Opening</button>
+          <button id="hostage-load-custom" class="btn-secondary">Load Custom</button>
           <button id="hostage-clear-board" class="btn-secondary">Clear Board</button>
-          <button id="hostage-export-csv" class="btn-secondary">Copy CSV</button>
+          <button id="hostage-export-csv" class="btn-secondary">Copy Positions</button>
         </div>
 
         <div class="color-picker" id="hostage-side-picker">
@@ -352,59 +148,83 @@ Wpawn,,,,,,Bpawn,Bpawn
 
         <div class="rotation-controls" style="margin-top: 12px; display: flex; gap: 8px; justify-content: center; align-items:center;">
           <label style="color: var(--text-muted);">Board:</label>
-          <button id="hostage-view-white" class="btn-secondary">White View (A1 bottom)</button>
-          <button id="hostage-view-black" class="btn-secondary">Black View (H8 bottom)</button>
+          <button id="hostage-view-white" class="btn-secondary">Black at Top (White View A1 bottom)</button>
+          <button id="hostage-view-black" class="btn-secondary">White at Top (Black View H8 bottom)</button>
         </div>
 
         <div class="hostage-notation-note">
-          A1 is bottom-left in White view. H8 is top-right. Use this lab to prototype positions and movement ideas.
+          A1 is bottom-left in White view. H8 is top-right. Use Experimental Mode to test positions and movement ideas.
         </div>
 
         <br>
         <div class="board-container" id="hostage-board-container"></div>
+        <div class="board-controls" style="margin-top:10px;">
+          <button id="hostage-shape-toggle-btn" class="btn-secondary" title="Toggle rhombus/square board">□ Square</button>
+        </div>
         <p class="error-msg" id="hostage-info" style="color: var(--text-muted); margin-top:12px;"></p>
       </div>
     `;
 
-    board = loadBoardFromCsv(STARTING_CSV);
+    setGameStateFromBoard(loadBoardFromCsv(STARTING_CSV), 'white');
 
     const container = document.getElementById('hostage-board-container');
     renderer = BoardRenderer.create(container, {
       size: Math.min(560, window.innerWidth - 40),
       diamond45: true,
       diamondScale: 0.68,
-      pieceRotationDeg: -45,
+      pieceRotationDeg: 0,
     });
     renderer.setBoard(board);
     renderer.onClick(handleClick);
+    updateTurnBanner();
 
     document.getElementById('back-to-lobby').addEventListener('click', () => window.App.navigate('/lobby'));
     document.getElementById('hostage-mode-move').addEventListener('click', () => setMode('move'));
     document.getElementById('hostage-mode-place').addEventListener('click', () => setMode('place'));
     document.getElementById('hostage-mode-erase').addEventListener('click', () => setMode('erase'));
     document.getElementById('hostage-load-opening').addEventListener('click', () => {
-      board = loadBoardFromCsv(STARTING_CSV);
+      setGameStateFromBoard(loadBoardFromCsv(STARTING_CSV), 'white');
       selectedPiece = null;
       renderer.clearHighlights();
       renderer.setBoard(board);
-      setInfo('Loaded Hostage opening from CSV.');
+      setInfo('Loaded the opening setup from CSV.');
+      updateTurnBanner();
+    });
+
+    document.getElementById('hostage-load-custom').addEventListener('click', () => {
+      const initialValue = boardToCsv();
+      const pasted = window.prompt('Paste 8x8 board CSV (e.g., WPawn,BQueen,...):', initialValue);
+      if (pasted === null) return;
+
+      try {
+        const nextBoard = loadBoardFromCsv(pasted);
+        setGameStateFromBoard(nextBoard, 'white');
+        selectedPiece = null;
+        renderer.clearHighlights();
+        renderer.setBoard(board);
+        setInfo('Loaded custom board from CSV.');
+        updateTurnBanner();
+      } catch {
+        setInfo('Invalid CSV. Expected 8 rows x 8 columns with tokens like WPawn, BKing, etc.');
+      }
     });
 
     document.getElementById('hostage-clear-board').addEventListener('click', () => {
-      board = createEmptyBoard();
+      setGameStateFromBoard(createEmptyBoard(), 'white');
       selectedPiece = null;
       renderer.clearHighlights();
       renderer.setBoard(board);
       setInfo('Board cleared.');
+      updateTurnBanner();
     });
 
     document.getElementById('hostage-export-csv').addEventListener('click', async () => {
       const text = boardToCsv();
       try {
         await navigator.clipboard.writeText(text);
-        setInfo('Current board copied as CSV.');
+        setInfo('Current board positions copied as CSV.');
       } catch {
-        setInfo('Could not copy automatically. Open console and run HostageLabPage.exportCsv().');
+        setInfo('Could not copy automatically. Open console and run ExperimentalModePage.exportCsv().');
       }
     });
 
@@ -422,9 +242,21 @@ Wpawn,,,,,,Bpawn,Bpawn
 
     document.getElementById('hostage-view-white').addEventListener('click', () => renderer.setRotation(0));
     document.getElementById('hostage-view-black').addEventListener('click', () => renderer.setRotation(180));
+    const hostageShapeToggleBtn = document.getElementById('hostage-shape-toggle-btn');
+    const syncHostageShapeLabel = () => {
+      if (!hostageShapeToggleBtn || !renderer) return;
+      hostageShapeToggleBtn.textContent = renderer.isDiamond45() ? '□ Square' : '◇ Rhombus';
+    };
+    syncHostageShapeLabel();
+    if (hostageShapeToggleBtn) {
+      hostageShapeToggleBtn.addEventListener('click', () => {
+        renderer.toggleDiamond45();
+        syncHostageShapeLabel();
+      });
+    }
 
     setMode('move');
-    setInfo('Experimental mode active. Place, erase, and move pieces freely.');
+    setInfo('Experimental Mode active. Place, erase, and move pieces freely.');
   }
 
   function setMode(newMode) {
@@ -448,7 +280,7 @@ Wpawn,,,,,,Bpawn,Bpawn
     });
 
     if (newMode === 'move') {
-      setInfo('Move mode: click a piece to preview legal moves, then click a highlighted destination.');
+      setInfo('Move mode: engine rules and turn order are enforced. Outcomes are evaluated after black moves.');
     }
     if (newMode === 'place') {
       setInfo('Place mode: click any square to place the selected side and piece.');
@@ -493,6 +325,7 @@ Wpawn,,,,,,Bpawn,Bpawn
     renderer.setBoard(board);
     selectedPiece = null;
     renderer.clearHighlights();
+    updateTurnBanner();
     return true;
   }
 
@@ -538,6 +371,7 @@ Wpawn,,,,,,Bpawn,Bpawn
         board[r][c] = { color: selectedSide, type: selectedType };
       }
       renderer.setBoard(board);
+      updateTurnBanner();
       return;
     }
 
@@ -550,7 +384,7 @@ Wpawn,,,,,,Bpawn,Bpawn
       if (board[r][c]) {
         selectedPiece = [r, c];
         renderer.setSelected([r, c]);
-        renderer.setLegalMoves(getLegalMovesForPiece(r, c));
+        renderer.setLegalMoves(HostageEngine.getLegalMoves(board, board[r][c].color, r, c));
       }
       return;
     }
@@ -570,11 +404,19 @@ Wpawn,,,,,,Bpawn,Bpawn
       return;
     }
 
-    if (!canMoveTo(sr, sc, r, c)) {
+    const pieceColor = fromPiece.color;
+    const legalMoves = HostageEngine.getLegalMoves(board, pieceColor, sr, sc);
+    const canMove = legalMoves.some(([mr, mc]) => mr === r && mc === c);
+    if (!canMove) {
       if (board[r][c]) {
-        selectedPiece = [r, c];
-        renderer.setSelected([r, c]);
-        renderer.setLegalMoves(getLegalMovesForPiece(r, c));
+        if (board[r][c].color === pieceColor || board[r][c].color) {
+          selectedPiece = [r, c];
+          renderer.setSelected([r, c]);
+          renderer.setLegalMoves(HostageEngine.getLegalMoves(board, board[r][c].color, r, c));
+        } else {
+          selectedPiece = null;
+          renderer.clearHighlights();
+        }
       } else {
         selectedPiece = null;
         renderer.clearHighlights();
@@ -582,64 +424,22 @@ Wpawn,,,,,,Bpawn,Bpawn
       return;
     }
 
-    // Paired-pawn split move: one pawn stays, one pawn moves.
-    if (fromPiece.type === 'pawn' && fromPiece.paired && board[r][c] === null) {
-      board[sr][sc] = { color: fromPiece.color, type: 'pawn' };
-      board[r][c] = { color: fromPiece.color, type: 'pawn' };
+    const moveResult = HostageEngine.processMove(board, pieceColor, [sr, sc], [r, c]);
+    if (!moveResult.valid) {
+      setInfo(moveResult.error || 'Illegal move.');
       selectedPiece = null;
       renderer.clearHighlights();
-      renderer.setBoard(board);
-      setInfo('Paired pawn split: one pawn remained, one moved.');
       return;
     }
 
-    const target = board[r][c];
-
-    // Merge two same-color single pawns.
-    if (
-      fromPiece.type === 'pawn' &&
-      !fromPiece.paired &&
-      target &&
-      target.type === 'pawn' &&
-      !target.paired &&
-      target.color === fromPiece.color
-    ) {
-      board[r][c] = { color: fromPiece.color, type: 'pawn', paired: true };
-      board[sr][sc] = null;
-      selectedPiece = null;
-      renderer.clearHighlights();
-      renderer.setBoard(board);
-      setInfo('Two pawns merged into a paired pawn.');
-      return;
-    }
-
-    if ((fromPiece.type === 'rook' || fromPiece.type === 'fort') && target) {
-      const dr = Math.sign(r - sr);
-      const dc = Math.sign(c - sc);
-      const pushR = r + dr;
-      const pushC = c + dc;
-      if (inBounds(pushR, pushC) && board[pushR][pushC] === null) {
-        board[pushR][pushC] = clonePiece(target);
-        board[r][c] = clonePiece(fromPiece);
-        board[sr][sc] = null;
-        selectedPiece = null;
-        renderer.clearHighlights();
-        renderer.setBoard(board);
-        setInfo('Rook/Fort push move applied.');
-        return;
-      }
-      selectedPiece = null;
-      renderer.clearHighlights();
-      setInfo('Push blocked: target square behind piece is occupied or out of bounds.');
-      return;
-    }
-
-    board[r][c] = clonePiece(fromPiece);
-    board[sr][sc] = clonePiece(target);
+    board = moveResult.board;
+    if (gameState) gameState.board = board;
 
     selectedPiece = null;
     renderer.clearHighlights();
     renderer.setBoard(board);
+    updateTurnBanner();
+    setInfo('Position updated. Experimental Mode does not enforce turns or round results.');
   }
 
   function cleanup() {
@@ -658,3 +458,5 @@ Wpawn,,,,,,Bpawn,Bpawn
     exportCsv,
   };
 })();
+
+window.HostageLabPage = window.ExperimentalModePage;

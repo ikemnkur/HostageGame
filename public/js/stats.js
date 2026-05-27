@@ -6,17 +6,29 @@ window.StatsPage = (() => {
   let leaderboard = null;
 
   function getUser() {
-    try { return JSON.parse(localStorage.getItem('linked_user')); } catch { return null; }
+    try { return JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user')); } catch { return null; }
   }
 
   async function fetchStats(userId) {
     try {
       const res = await fetch(`/api/users/${userId}/stats`);
-      return await res.json();
+      const data = await res.json();
+      if (!res.ok) return null;
+      return data;
     } catch (err) {
       console.error('Failed to fetch stats:', err);
       return null;
     }
+  }
+
+  function getDefaultStats() {
+    return {
+      elo: 1200,
+      gamesPlayed: 0,
+      wins: 0,
+      losses: 0,
+      draws: 0,
+    };
   }
 
   async function fetchUserGames(userId) {
@@ -103,7 +115,7 @@ window.StatsPage = (() => {
       return;
     }
 
-    const stats = userStats.stats;
+    const stats = { ...getDefaultStats(), ...(userStats?.stats || {}) };
     const winRate = stats.gamesPlayed > 0 
       ? ((stats.wins / stats.gamesPlayed) * 100).toFixed(1) 
       : '0.0';
@@ -147,7 +159,8 @@ window.StatsPage = (() => {
 
     const user = getUser();
     const gamesHtml = userGames.slice(0, 10).map(game => {
-      const userPlayer = game.players.find(p => p.username === user.username);
+      const players = Array.isArray(game.players) ? game.players : [];
+      const userPlayer = players.find(p => p.username === user.username);
       const isWinner = game.winner === userPlayer?.color;
       const isDraw = game.winner === 'draw';
       
@@ -174,7 +187,7 @@ window.StatsPage = (() => {
           <div class="game-info">
             <div class="game-name">${game.name || 'Game'}</div>
             <div class="game-details">
-              ${game.players.map(p => `<span class="player-badge ${p.color}">${p.username}</span>`).join(' ')}
+              ${players.map(p => `<span class="player-badge ${p.color}">${p.username}</span>`).join(' ')}
             </div>
             <div class="game-meta">${game.turnCount} turns • ${date}</div>
           </div>
