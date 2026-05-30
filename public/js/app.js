@@ -43,6 +43,9 @@ window.App = (() => {
       const gameId = path.split('/review/')[1];
       ReviewPage.render(gameId);
       currentCleanup = ReviewPage.cleanup;
+    } else if (path === '/review-import') {
+      ImportReviewPage.render();
+      currentCleanup = ImportReviewPage.cleanup;
     } else if (path.startsWith('/spectate/')) {
       const gameId = path.split('/spectate/')[1];
       SpectatePage.render(gameId);

@@ -100,6 +100,7 @@ window.LobbyPage = (() => {
           <div class="lobby-actions">
             <button id="show-create-form-btn">Create Game</button>
             <button id="stats-btn" class="btn-secondary">Stats</button>
+            <button id="review-btn" class="btn-secondary">Review Game</button>
             <button id="practice-btn" class="btn-secondary">Practice</button>
             <button id="experimental-btn" class="btn-secondary">Experimental Mode</button>
             <button id="rules-btn" class="btn-secondary">How to Play</button>
@@ -210,6 +211,7 @@ window.LobbyPage = (() => {
       });
     });
     document.getElementById('stats-btn').addEventListener('click', () => window.App.navigate('/stats'));
+    document.getElementById('review-btn').addEventListener('click', () => window.App.navigate('/review-import'));
     document.getElementById('practice-btn').addEventListener('click', () => window.App.navigate('/practice'));
     document.getElementById('experimental-btn').addEventListener('click', () => window.App.navigate('/experimental-mode'));
     document.getElementById('rules-btn').addEventListener('click', () => window.App.navigate('/rules'));

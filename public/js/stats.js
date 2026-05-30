@@ -153,7 +153,10 @@ window.ProfilePage = (() => {
           </div>
 
           <div class="stats-section card">
-            <h3>Recent Games</h3>
+            <div class="stats-section-head">
+              <h3>Recent Games</h3>
+              <button id="open-import-review-btn" class="btn-sm">Import JSON Review</button>
+            </div>
             <br>
             <div id="recent-games-content"><p>Loading...</p></div>
           </div>
@@ -170,6 +173,13 @@ window.ProfilePage = (() => {
     document.getElementById('back-to-lobby').addEventListener('click', () => {
       window.App.navigate('/lobby');
     });
+
+    const importBtn = document.getElementById('open-import-review-btn');
+    if (importBtn) {
+      importBtn.addEventListener('click', () => {
+        window.App.navigate('/review-import');
+      });
+    }
 
     viewedUser = await fetchStats(userId);
     viewedGames = await fetchUserGames(userId);

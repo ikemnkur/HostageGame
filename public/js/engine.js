@@ -34,10 +34,10 @@
   const STARTING_CSV = `
 BQueen,WKnight,WBishop,Wpawn,Wpawn,,,,
 WBishop,WKing,Wpawn,Wpawn,,,,
-WKnight,Wpawn,,,,,,
+WKnight,Wpawn,Wrook,,,,,
 Wpawn,Wpawn,,,,,,Bpawn,
 Wpawn,,,,,,Bpawn,Bpawn
-,,,,,,Bpawn,BKnight
+,,,,,Brook,Bpawn,BKnight
 ,,,,Bpawn,Bpawn,BKing,BBishop
 ,,,Bpawn,Bpawn,BBishop,BKnight,WQueen
 `;
@@ -337,11 +337,10 @@ Wpawn,,,,,,Bpawn,Bpawn
 
     if (piece.type === 'pawn') {
       if (piece.paired) {
-        // Pair cannot move as a pair; one pawn can split out to orthogonal empty squares.
+        // Pair cannot move as a pair; one pawn can split to orthogonal empty squares,
+        // or transfer to an adjacent friendly single pawn to form a new pair there.
         for (const [dr, dc] of ORTHO) {
-          const tr = fromR + dr;
-          const tc = fromC + dc;
-          if (inBounds(tr, tc) && !board[tr]?.[tc]) moves.push([tr, tc]);
+          addMoveIfValid(board, moves, piece, fromR + dr, fromC + dc, { capture: false });
         }
         return moves;
       }
@@ -447,6 +446,14 @@ Wpawn,,,,,,Bpawn,Bpawn
 
     if (piece.type === 'pawn' && piece.paired) {
       // Split pair: one pawn moves, one stays.
+      // If moving onto adjacent friendly single pawn, transferred pawn joins it as a pair.
+      if (target && target.type === 'pawn' && target.color === piece.color && !target.paired) {
+        b[fr][fc] = { color: piece.color, type: 'pawn' };
+        b[tr][tc] = { color: piece.color, type: 'pawn', paired: true };
+        const promotedTo = applyEnemyCastlePromotion(b[tr][tc]);
+        return { valid: true, board: b, meta: { transferredPawnPair: true, promotedTo } };
+      }
+
       b[fr][fc] = { color: piece.color, type: 'pawn' };
       b[tr][tc] = { color: piece.color, type: 'pawn' };
       const promotedTo = applyEnemyCastlePromotion(b[tr][tc]);

@@ -1,0 +1,14 @@
+mysqldump \
+  -h 34.57.139.74 \
+  -P 3306 \
+  -u remote \
+  -p \
+  --single-transaction \
+  --triggers \
+  --routines \
+  --events \
+  --no-tablespaces \
+  drauwper > drauwper.sql
+
+  sudo mysql -e "DROP DATABASE IF EXISTS drauwper; CREATE DATABASE drauwper;"
+sudo mysql drauwper < drauwper.sql

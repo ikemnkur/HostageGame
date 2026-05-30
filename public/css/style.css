@@ -1654,10 +1654,42 @@ input[type="email"]:focus {
   font-style: italic;
 }
 
+.stats-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 /* ─── Review Page ────────────────────────────────────── */
 .review-page {
   padding: 20px 0;
   text-align: center;
+}
+
+.import-review-upload {
+  text-align: left;
+}
+
+.import-review-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.import-review-file-label {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.import-review-note {
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+
+#import-review-file {
+  max-width: 340px;
 }
 
 .review-body {
@@ -1833,6 +1865,11 @@ input[type="email"]:focus {
 @media (max-width: 768px) {
   .review-body {
     flex-direction: column;
+  }
+
+  .stats-section-head {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .practice-layout {

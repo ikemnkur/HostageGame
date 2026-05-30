@@ -5,10 +5,10 @@ window.ExperimentalModePage = (() => {
 #Start-----------------------------------------
 BQueen,WKnight,WBishop,Wpawn,Wpawn,,,,
 WBishop,WKing,Wpawn,Wpawn,,,,
-WKnight,Wpawn,,,,,,
+WKnight,Wpawn,Wrook,,,,,
 Wpawn,Wpawn,,,,,,Bpawn,
 Wpawn,,,,,,Bpawn,Bpawn
-,,,,,,Bpawn,BKnight
+,,,,,Brook,Bpawn,BKnight
 ,,,,Bpawn,Bpawn,BKing,BBishop
 ,,,Bpawn,Bpawn,BBishop,BKnight,WQueen
 #End-----------------------------------------
