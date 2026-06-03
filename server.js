@@ -13,6 +13,27 @@ const knex = require('./config/knex');
 const emailService = require('./email-service');
 const HostageEngine = require('./public/js/engine.js');
 
+// ─── Cache-bust ID ────────────────────────────────────────
+// Changes on every server restart (i.e. every deploy), forcing browsers to
+// fetch fresh JS/CSS even when network intermediaries ignore no-store headers.
+const BUILD_ID = Date.now().toString(36);
+
+// Pre-process index.html once: append ?v=<BUILD_ID> to all local /js/ and /css/ URLs.
+const INDEX_HTML_PATH = path.join(__dirname, 'public', 'index.html');
+let cachedIndexHtml = null;
+function getIndexHtml() {
+  if (!cachedIndexHtml) {
+    const raw = fs.readFileSync(INDEX_HTML_PATH, 'utf8');
+    // Inject version query string into src and href attributes pointing at local assets.
+    cachedIndexHtml = raw
+      .replace(/(src|href)="(\/(?:js|css)\/[^"]+)"/g, (_, attr, url) => {
+        const sep = url.includes('?') ? '&' : '?';
+        return `${attr}="${url}${sep}v=${BUILD_ID}"`;
+      });
+  }
+  return cachedIndexHtml;
+}
+
 function normalizeOrigin(origin) {
   if (!origin) return '';
   return String(origin).trim().replace(/\/$/, '');
@@ -2056,7 +2077,11 @@ function saveGameHistory(game) {
 
 // ─── SPA fallback ─────────────────────────────────────────
 app.use((_req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(getIndexHtml());
 });
 
 // ─── Start ────────────────────────────────────────────────
