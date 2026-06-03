@@ -22,7 +22,10 @@ window.GamePage = (() => {
   let preGameStatsModalTimer = null;
 
   function getUser() {
-    try { return JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user')); } catch { return null; }
+    try {
+      return JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user'))
+        || JSON.parse(localStorage.getItem('hostage_guest'));
+    } catch { return null; }
   }
 
   function render(gameId) {
@@ -179,6 +182,26 @@ window.GamePage = (() => {
       if (game.status === 'finished' && previousGameStatus === 'playing') {
         const user = getUser();
         const userPlayer = game.players.find(p => p.id === user.id);
+
+        // Update guest local stats if applicable
+        if (user && user.isGuest && userPlayer) {
+          try {
+            const defaults = { wins: 0, losses: 0, draws: 0, gamesPlayed: 0, elo: 1200 };
+            const gs = { ...defaults, ...(JSON.parse(localStorage.getItem('hostage_guest_stats') || '{}')) };
+            gs.gamesPlayed += 1;
+            if (game.winner === 'draw') {
+              gs.draws += 1;
+            } else if (userPlayer.color === game.winner) {
+              gs.wins += 1;
+              gs.elo = Math.round(gs.elo + 16); // simple flat increment for guest mode
+            } else {
+              gs.losses += 1;
+              gs.elo = Math.max(100, Math.round(gs.elo - 16));
+            }
+            localStorage.setItem('hostage_guest_stats', JSON.stringify(gs));
+          } catch {}
+        }
+
         setTimeout(() => {
           if (game.winner === 'draw') {
             // Draw - no win/lose sound
@@ -307,7 +330,9 @@ window.GamePage = (() => {
         }, 2000);
         return;
       }
-      SocketClient.sendMove(gameState.id, user.id, [r, c], [r, c], { promote: true });
+      const piece = gameState.board?.[r]?.[c];
+      const opts = piece?.pendingCastlePromotion ? { castlePromote: true } : { promote: true };
+      SocketClient.sendMove(gameState.id, user.id, [r, c], [r, c], opts);
       selectedPiece = null;
       renderer.clearHighlights();
       updateActionButtons(user);
@@ -749,8 +774,13 @@ window.GamePage = (() => {
 
     const [r, c] = selectedPiece;
     const piece = gameState.board?.[r]?.[c];
-    if (!piece || piece.color !== currentPlayer.color || piece.type !== 'pawn' || !piece.paired) return false;
+    if (!piece || piece.color !== currentPlayer.color) return false;
 
+    // Castle promotion (piece reached enemy castle and awaits button press)
+    if (piece.pendingCastlePromotion) return true;
+
+    // Normal pawn promotion (paired pawn adjacent to own king on enemy side)
+    if (piece.type !== 'pawn' || !piece.paired) return false;
     const probe = HostageEngine.applyMove(toEngineState(gameState), [r, c], [r, c], { promote: true });
     return !!probe.valid;
   }

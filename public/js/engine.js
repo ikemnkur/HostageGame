@@ -115,7 +115,27 @@ Wpawn,,,,,,Bpawn,Bpawn
       points: { white: 0, black: 0 },
       // Tracks if a queen has reached its own side at least once; used for null-game detection.
       queenCrossedToOwnSide: { white: false, black: false },
+      // Serialised board+turn keys used for three-fold repetition detection.
+      positionHistory: [],
     };
+  }
+
+  // Compact board serialisation used for repetition detection.
+  // Encodes each piece as one or two chars: upper = white, lower = black; '*' suffix = paired pawn.
+  function serializePosition(board, turn) {
+    const T = { pawn: 'p', rook: 'r', knight: 'n', bishop: 'b', queen: 'q', king: 'k', fort: 'f' };
+    let s = turn[0]; // 'w' or 'b'
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        const p = board[r][c];
+        if (!p) { s += '.'; continue; }
+        let ch = T[p.type] || '?';
+        if (p.color === 'white') ch = ch.toUpperCase();
+        if (p.paired) ch += '*';
+        s += ch;
+      }
+    }
+    return s;
   }
 
   function findPiece(board, color, type) {
@@ -382,6 +402,15 @@ Wpawn,,,,,,Bpawn,Bpawn
       return { valid: true, board: b, meta: { demoted: true } };
     }
 
+    if (options.castlePromote) {
+      if (!piece.pendingCastlePromotion) {
+        return { valid: false, error: 'No pending castle promotion on this piece.' };
+      }
+      const { pendingCastlePromotion: promoteTo } = piece;
+      b[fr][fc] = { color: piece.color, type: promoteTo };
+      return { valid: true, board: b, meta: { castlePromoted: true, promotedTo: promoteTo } };
+    }
+
     if (options.promote && piece.type === 'pawn' && piece.paired) {
       const notOnOwnSide = !isOnOwnSide(piece.color, fr, fc);
       const kingAdjacent = getAdjacentSquares(fr, fc).some(([ar, ac]) => {
@@ -411,19 +440,20 @@ Wpawn,,,,,,Bpawn,Bpawn
       const enemyCastle = getEnemyCastle(movedPiece.color);
       if (tr !== enemyCastle[0] || tc !== enemyCastle[1]) return null;
 
+      let promoteTo = null;
       if (movedPiece.type === 'pawn' && !movedPiece.paired) {
-        b[tr][tc] = { color: movedPiece.color, type: 'knight' };
-        return 'knight';
+        promoteTo = 'knight';
+      } else if ((movedPiece.type === 'pawn' && movedPiece.paired) || movedPiece.type === 'fort') {
+        promoteTo = 'bishop';
+      } else if (movedPiece.type === 'rook') {
+        promoteTo = 'queen';
       }
-      if ((movedPiece.type === 'pawn' && movedPiece.paired) || movedPiece.type === 'fort') {
-        b[tr][tc] = { color: movedPiece.color, type: 'bishop' };
-        return 'bishop';
+
+      if (promoteTo) {
+        // Mark the piece as awaiting promotion — the player must press Promote to complete it.
+        b[tr][tc] = { ...b[tr][tc], pendingCastlePromotion: promoteTo };
       }
-      if (movedPiece.type === 'rook') {
-        b[tr][tc] = { color: movedPiece.color, type: 'queen' };
-        return 'queen';
-      }
-      return null;
+      return promoteTo;
     };
 
     if (piece.type === 'rook' || piece.type === 'fort') {
@@ -542,6 +572,23 @@ Wpawn,,,,,,Bpawn,Bpawn
         }
       }
     }
+
+    // Positional objectives (Chebyshev distance, 0.1 pts per square closer):
+    //   Queen toward own castle  — returning the queen is the win condition.
+    //   King toward enemy castle — breaching the enemy castle is the other win condition.
+    const ownCastle = CASTLE_HOME[color];
+    const enemyCastle = CASTLE_HOME[color === 'white' ? 'black' : 'white'];
+    const queenPos = findPiece(board, color, 'queen');
+    if (queenPos) {
+      const dist = Math.max(Math.abs(queenPos[0] - ownCastle[0]), Math.abs(queenPos[1] - ownCastle[1]));
+      score += (7 - dist) * 0.15;
+    }
+    const kingPos = findPiece(board, color, 'king');
+    if (kingPos) {
+      const dist = Math.max(Math.abs(kingPos[0] - enemyCastle[0]), Math.abs(kingPos[1] - enemyCastle[1]));
+      score += (7 - dist) * 0.3;
+    }
+
     return score;
   }
 
@@ -746,6 +793,29 @@ Wpawn,,,,,,Bpawn,Bpawn
     const result = processMove(state.board, state.turn, from, to, options);
     if (!result.valid) return result;
 
+    // If a piece is now awaiting castle promotion, hold the turn so the player can press Promote.
+    const pendingCastle = (() => {
+      for (let r = 0; r < BOARD_SIZE; r++) {
+        for (let c = 0; c < BOARD_SIZE; c++) {
+          if (result.board[r]?.[c]?.pendingCastlePromotion) return [r, c];
+        }
+      }
+      return null;
+    })();
+    if (pendingCastle) {
+      const pendingState = {
+        ...state,
+        board: result.board,
+        moveCount: (state.moveCount || 0) + 1,
+        // turn intentionally NOT flipped — same player must complete the promotion
+        result: null,
+        points: { ...(state.points || { white: 0, black: 0 }) },
+        queenCrossedToOwnSide: { ...(state.queenCrossedToOwnSide || { white: false, black: false }) },
+      };
+      updateQueenCrossingFlags(pendingState);
+      return { valid: true, state: pendingState, meta: { ...result.meta, awaitingCastlePromotion: true } };
+    }
+
     const nextState = {
       ...state,
       board: result.board,
@@ -789,6 +859,24 @@ Wpawn,,,,,,Bpawn,Bpawn
         };
       }
       nextState.status = 'finished';
+    }
+
+    // Three-fold repetition — only checked while game is still live after all rule checks.
+    if (nextState.status === 'playing') {
+      const posKey = serializePosition(nextState.board, nextState.turn);
+      const positionHistory = [...(state.positionHistory || []), posKey];
+      nextState.positionHistory = positionHistory;
+      const repCount = positionHistory.reduce((n, p) => n + (p === posKey ? 1 : 0), 0);
+      if (repCount >= 3) {
+        nextState.result = {
+          type: 'draw',
+          reason: 'Three-fold repetition',
+          points: { ...(nextState.points || { white: 0, black: 0 }) },
+        };
+        nextState.status = 'finished';
+      }
+    } else {
+      nextState.positionHistory = state.positionHistory || [];
     }
 
     return { valid: true, state: nextState, meta: result.meta || {} };

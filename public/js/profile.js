@@ -6,7 +6,10 @@ window.StatsPage = (() => {
   let leaderboard = null;
 
   function getUser() {
-    try { return JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user')); } catch { return null; }
+    try {
+      return JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user'))
+        || JSON.parse(localStorage.getItem('hostage_guest'));
+    } catch { return null; }
   }
 
   async function fetchStats(userId) {
@@ -57,6 +60,50 @@ window.StatsPage = (() => {
     const user = getUser();
     if (!user) {
       window.App.navigate('/');
+      return;
+    }
+
+    // ── Guest mode: render local stats only ──────────────────
+    if (user.isGuest) {
+      const gs = (() => {
+        try { return { wins: 0, losses: 0, draws: 0, gamesPlayed: 0, elo: 1200, ...(JSON.parse(localStorage.getItem('hostage_guest_stats') || '{}')) }; }
+        catch { return { wins: 0, losses: 0, draws: 0, gamesPlayed: 0, elo: 1200 }; }
+      })();
+      const winRate = gs.gamesPlayed > 0 ? ((gs.wins / gs.gamesPlayed) * 100).toFixed(1) : '0.0';
+      const app = document.getElementById('app');
+      app.innerHTML = `
+        <div class="stats-page">
+          <div class="game-header">
+            <button id="back-to-lobby" class="btn-secondary">← Lobby</button>
+            <h2>Statistics</h2>
+            <div></div>
+          </div>
+          <div class="guest-banner" style="margin-bottom:16px;" role="alert">
+            👤 <strong>Guest Mode</strong> — these stats are stored locally in your browser.
+            <a href="#" id="stats-register-link" style="margin-left:8px;">Create an account to track ranked stats →</a>
+          </div>
+          <div class="stats-container">
+            <div class="stats-section card">
+              <h3>Your Local Stats <span class="guest-badge">GUEST</span></h3>
+              <div class="stats-grid">
+                <div class="stat-item"><div class="stat-label">Local ELO</div><div class="stat-value elo">${gs.elo}</div></div>
+                <div class="stat-item"><div class="stat-label">Games Played</div><div class="stat-value">${gs.gamesPlayed}</div></div>
+                <div class="stat-item"><div class="stat-label">Wins</div><div class="stat-value wins">${gs.wins}</div></div>
+                <div class="stat-item"><div class="stat-label">Losses</div><div class="stat-value losses">${gs.losses}</div></div>
+                <div class="stat-item"><div class="stat-label">Draws</div><div class="stat-value draws">${gs.draws}</div></div>
+                <div class="stat-item"><div class="stat-label">Win Rate</div><div class="stat-value">${winRate}%</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+      document.getElementById('back-to-lobby').addEventListener('click', () => window.App.navigate('/lobby'));
+      const regLink = document.getElementById('stats-register-link');
+      if (regLink) regLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        localStorage.removeItem('hostage_guest');
+        window.App.navigate('/');
+      });
       return;
     }
 

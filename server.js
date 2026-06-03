@@ -880,10 +880,18 @@ app.get('/api/games', async (req, res) => {
 // Create game
 app.post('/api/games', async (req, res) => {
   try {
-    const { userId, gameName, timerMode, timerValue, timeControl } = req.body;
-    const userRow = await knex(TABLES.users).where({ id: userId }).first();
-    if (!userRow) return res.status(400).json({ error: 'User not found.' });
-    const user = rowToUser(userRow);
+    const { userId, gameName, timerMode, timerValue, timeControl, isGuest, guestId, guestUsername } = req.body;
+
+    let user;
+    if (isGuest && guestId && guestUsername) {
+      // Guest player: skip DB lookup
+      const safeName = String(guestUsername).replace(/[^a-zA-Z0-9 _-]/g, '').trim().slice(0, 20) || 'Guest';
+      user = { id: String(guestId).slice(0, 60), username: safeName, elo: 1200, isGuest: true };
+    } else {
+      const userRow = await knex(TABLES.users).where({ id: userId }).first();
+      if (!userRow) return res.status(400).json({ error: 'User not found.' });
+      user = rowToUser(userRow);
+    }
 
     const COLORS = ['white', 'black'];
     const max = 2;
@@ -943,24 +951,33 @@ app.post('/api/games', async (req, res) => {
 // Join game
 app.post('/api/games/:gameId/join', async (req, res) => {
   try {
-    const { userId } = req.body;
+    const { userId, isGuest, guestId, guestUsername } = req.body;
     const game = await getGame(req.params.gameId);
     if (!game) return res.status(404).json({ error: 'Game not found.' });
     if (game.status !== 'waiting') return res.status(400).json({ error: 'Game already started.' });
     if (game.players.length >= game.maxPlayers) return res.status(400).json({ error: 'Game is full.' });
-    if (game.players.find(p => p.id === userId)) return res.status(400).json({ error: 'Already in this game.' });
 
-    const userRow = await knex(TABLES.users).where({ id: userId }).first();
-    if (!userRow) return res.status(400).json({ error: 'User not found.' });
-    const user = rowToUser(userRow);
+    let user;
+    if (isGuest && guestId && guestUsername) {
+      // Guest player: skip DB lookup and block checks
+      const safeName = String(guestUsername).replace(/[^a-zA-Z0-9 _-]/g, '').trim().slice(0, 20) || 'Guest';
+      const safeId = String(guestId).slice(0, 60);
+      if (game.players.find(p => p.id === safeId)) return res.status(400).json({ error: 'Already in this game.' });
+      user = { id: safeId, username: safeName, elo: 1200, isGuest: true };
+    } else {
+      if (game.players.find(p => p.id === userId)) return res.status(400).json({ error: 'Already in this game.' });
+      const userRow = await knex(TABLES.users).where({ id: userId }).first();
+      if (!userRow) return res.status(400).json({ error: 'User not found.' });
+      user = rowToUser(userRow);
 
-    const creator = game.players[0];
-    if (creator?.id) {
-      const creatorRow = await knex(TABLES.users).where({ id: creator.id }).first();
-      const creatorBlocked = parseBlockedUsers(creatorRow?.BlockedUsers || creatorRow?.blocked_users || '');
-      const joinerBlocked = parseBlockedUsers(userRow?.BlockedUsers || userRow?.blocked_users || '');
-      if (creatorBlocked.includes(user.id) || joinerBlocked.includes(creator.id)) {
-        return res.status(403).json({ error: 'You cannot join this game due to block settings.' });
+      const creator = game.players[0];
+      if (creator?.id) {
+        const creatorRow = await knex(TABLES.users).where({ id: creator.id }).first();
+        const creatorBlocked = parseBlockedUsers(creatorRow?.BlockedUsers || creatorRow?.blocked_users || '');
+        const joinerBlocked = parseBlockedUsers(userRow?.BlockedUsers || userRow?.blocked_users || '');
+        if (creatorBlocked.includes(user.id) || joinerBlocked.includes(creator.id)) {
+          return res.status(403).json({ error: 'You cannot join this game due to block settings.' });
+        }
       }
     }
 
@@ -1658,6 +1675,7 @@ io.on('connection', (socket) => {
         status: game.status || 'playing',
         points: game.points || { white: 0, black: 0 },
         queenCrossedToOwnSide: game.queenCrossedToOwnSide || { white: false, black: false },
+        positionHistory: game.positionHistory || [],
       };
 
       const result = HostageEngine.applyMove(engineState, from, to, options || {});
@@ -1670,6 +1688,7 @@ io.on('connection', (socket) => {
       game.turnCount = result.state.moveCount;
       game.points = result.state.points;
       game.queenCrossedToOwnSide = result.state.queenCrossedToOwnSide;
+      game.positionHistory = result.state.positionHistory || [];
       game.result = result.state.result || null;
       if (!game.moveHistory) game.moveHistory = [];
       game.moveHistory.push({
@@ -1677,7 +1696,7 @@ io.on('connection', (socket) => {
         color: playerColor,
         username: game.players[playerIndex].username,
         from, to,
-        action: result.meta?.promoted ? 'promote' : (result.meta?.demoted ? 'demote' : undefined),
+        action: (result.meta?.promoted || result.meta?.castlePromoted) ? 'promote' : (result.meta?.demoted ? 'demote' : undefined),
         timestamp: Date.now(),
       });
 
@@ -1975,6 +1994,8 @@ function advanceTurn(game) {
 
 async function updatePlayerStats(game) {
   if (game.status !== 'finished') return;
+  // Skip ELO updates for any game that included a guest player.
+  if (game.players.some(p => p.isGuest)) return;
   const isDraw = game.winner === 'draw' || !game.winner;
   const userRows = await knex(TABLES.users).whereIn('id', game.players.map(p => p.id));
   const byId = new Map(userRows.map(r => [r.id, r]));
@@ -2049,11 +2070,39 @@ const PROXY = process.env.PROXY_PATH || '';
 
 
 // const PORT = process.env.PORT || 3001;
+// ─── Stale game cleanup (every 5 min, removes waiting games > 30 min old) ──
+const STALE_GAME_AGE_MS = 30 * 60 * 1000; // 30 minutes
+const STALE_GAME_CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+async function cleanupStaleGames() {
+  try {
+    const cutoff = Date.now() - STALE_GAME_AGE_MS;
+    const stale = await knex(TABLES.games)
+      .where({ status: 'waiting' })
+      .where('created_at', '<', cutoff)
+      .select('id');
+
+    if (stale.length === 0) return;
+
+    const staleIds = stale.map(r => r.id);
+    await knex(TABLES.games).whereIn('id', staleIds).delete();
+
+    io.emit('lobby:update');
+    console.log(`[cleanup] Removed ${staleIds.length} stale waiting game(s).`);
+  } catch (err) {
+    console.error('[cleanup] Failed to remove stale games:', err.message);
+  }
+}
+
 server.listen(PORT, async () => {
   try {
     // Test database connection
     await knex.raw('SELECT 1');
     console.log('🚀 Express Server with MySQL is running on port', PORT);
+
+    // Start stale game cleanup job
+    setInterval(cleanupStaleGames, STALE_GAME_CHECK_INTERVAL_MS);
+    console.log(`🧹 Stale game cleanup job started (interval: ${STALE_GAME_CHECK_INTERVAL_MS / 60000} min, max age: ${STALE_GAME_AGE_MS / 60000} min).`);
     console.log('�️  Database: lnx_game (MySQL)');
     console.log('🌐 API Base URL: http://localhost:' + PORT + PROXY + '/api');
     console.log('📋 Available endpoints:');

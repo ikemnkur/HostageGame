@@ -143,7 +143,7 @@ Wpawn,,,,,,Bpawn,Bpawn<br>
               </div>
               <div class="lab-card">
                 <h3>Workflow</h3>
-                <p>Add, remove, and reposition pieces until the rescue pattern feels right.</p>
+                <p>Add, remove, and reposition pieces to simulate different in-game scenarios.</p>
               </div>
             </div>
           </section>

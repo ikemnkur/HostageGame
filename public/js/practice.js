@@ -9,6 +9,8 @@ window.PracticePage = (() => {
   let aiTurnTimer = null;
   let practiceMoveHistory = [];
   let practiceStartedAt = null;
+  let botDifficulty = 1.0;       // 0–1 difficulty slider value
+  let lastBotFromSquare = null; // track last bot piece origin (for random-move anti-repeat)
 
   function getUser() {
     try { return JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user')); } catch { return null; }
@@ -41,6 +43,10 @@ window.PracticePage = (() => {
             <option value="white">Play White</option>
             <option value="black">Play Black</option>
           </select>
+          <label id="bot-difficulty-label" style="color: var(--text-muted); display:none;">Difficulty</label>
+          <input type="range" id="difficulty-slider" min="0" max="1" step="0.05" value="1"
+            style="display:none; width:110px; cursor:pointer; accent-color:var(--accent);" />
+          <span id="difficulty-display" style="display:none; min-width:52px; color:var(--text); font-size:0.88rem; font-weight:600;">Max</span>
           <button id="practice-promote-btn" class="btn-secondary" disabled>Promote</button>
           <button id="practice-demote-btn" class="btn-secondary" disabled>Demote</button>
           <button id="practice-reset-btn" class="btn-secondary">New Practice Game</button>
@@ -103,7 +109,11 @@ window.PracticePage = (() => {
 
     document.getElementById('practice-mode-select').addEventListener('change', (e) => {
       practiceMode = e.target.value;
-      document.getElementById('practice-side-select').disabled = practiceMode !== 'computer';
+      const isComputer = practiceMode === 'computer';
+      document.getElementById('practice-side-select').disabled = !isComputer;
+      document.getElementById('bot-difficulty-label').style.display = isComputer ? '' : 'none';
+      document.getElementById('difficulty-slider').style.display    = isComputer ? '' : 'none';
+      document.getElementById('difficulty-display').style.display   = isComputer ? '' : 'none';
       resetGame();
     });
 
@@ -117,7 +127,9 @@ window.PracticePage = (() => {
       if (!gameState || !selectedPiece) return;
       const [r, c] = selectedPiece;
       const moverColor = gameState.turn;
-      const promoteResult = HostageEngine.applyMove(gameState, [r, c], [r, c], { promote: true });
+      const piece = gameState.board?.[r]?.[c];
+      const isCastlePromote = !!piece?.pendingCastlePromotion;
+      const promoteResult = HostageEngine.applyMove(gameState, [r, c], [r, c], isCastlePromote ? { castlePromote: true } : { promote: true });
       if (!promoteResult.valid) {
         setInfo(promoteResult.error || 'Promotion is not legal for this selection.');
         updateActionButtons();
@@ -178,6 +190,15 @@ window.PracticePage = (() => {
     document.getElementById('practice-copy-json-btn').addEventListener('click', () => copyPracticeHistoryJson());
     document.getElementById('practice-copy-positions-btn').addEventListener('click', () => copyPracticeBoardPositions());
 
+    const diffSlider  = document.getElementById('difficulty-slider');
+    const diffDisplay = document.getElementById('difficulty-display');
+    if (diffSlider) {
+      diffSlider.addEventListener('input', () => {
+        botDifficulty = parseFloat(diffSlider.value);
+        if (diffDisplay) diffDisplay.textContent = difficultyLabel(botDifficulty);
+      });
+    }
+
     document.getElementById('practice-side-select').disabled = false;
     resetGame();
   }
@@ -228,6 +249,7 @@ window.PracticePage = (() => {
     practiceMoveHistory = [];
     practiceStartedAt = new Date().toISOString();
     selectedPiece = null;
+    lastBotFromSquare = null;
     setInfo('');
     if (renderer) {
       renderer.clearHighlights();
@@ -330,7 +352,7 @@ window.PracticePage = (() => {
       name: 'Practice Session',
       status,
       mode: practiceMode,
-      humanSide,
+      humanSide, 
       createdAt: practiceStartedAt || nowIso,
       exportedAt: nowIso,
       turn: gameState?.turn || null,
@@ -390,7 +412,11 @@ window.PracticePage = (() => {
     if (!gameState || gameState.status !== 'playing' || !selectedPiece) return false;
     const [r, c] = selectedPiece;
     const piece = gameState.board?.[r]?.[c];
-    if (!piece || piece.color !== gameState.turn || piece.type !== 'pawn' || !piece.paired) return false;
+    if (!piece || piece.color !== gameState.turn) return false;
+    // Castle promotion (piece reached enemy castle and awaits button press)
+    if (piece.pendingCastlePromotion) return true;
+    // Normal pawn promotion (paired pawn adjacent to own king on enemy side)
+    if (piece.type !== 'pawn' || !piece.paired) return false;
     const probe = HostageEngine.applyMove(gameState, [r, c], [r, c], { promote: true });
     return !!probe.valid;
   }
@@ -562,18 +588,46 @@ window.PracticePage = (() => {
   function playComputerMove() {
     if (!gameState || gameState.status !== 'playing') return;
     const moverColor = gameState.turn;
+
+    // If there is a pending castle promotion for the bot, complete it before picking a new move.
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        const piece = gameState.board?.[r]?.[c];
+        if (piece?.color === moverColor && piece.pendingCastlePromotion) {
+          const castleResult = HostageEngine.applyMove(gameState, [r, c], [r, c], { castlePromote: true });
+          if (!castleResult.valid) {
+            setInfo('Castle promotion failed for computer.');
+            return;
+          }
+          gameState = castleResult.state;
+          selectedPiece = null;
+          if (renderer) {
+            renderer.clearHighlights();
+            renderer.setBoard(gameState.board);
+            renderer.setLastMove([r, c], [r, c]);
+          }
+          appendPracticeMove({ color: moverColor, from: [r, c], to: [r, c], action: 'promote' });
+          setInfo(`Computer promoted piece at ${formatSquare([r, c])}.`);
+          updateStatus();
+          updateActionButtons();
+          queueComputerMoveIfNeeded();
+          return;
+        }
+      }
+    }
     const choice = pickComputerMove(gameState);
     if (!choice) {
       setInfo('Computer found no legal move. Reset the board to continue practicing.');
       return;
     }
 
-    const result = HostageEngine.applyMove(gameState, choice.from, choice.to);
+    const result = HostageEngine.applyMove(gameState, choice.from, choice.to, choice.options || {});
     if (!result.valid) {
       setInfo(result.error || 'Computer move failed.');
       return;
     }
 
+    lastBotFromSquare = choice.from;
     gameState = result.state;
     selectedPiece = null;
     if (renderer) {
@@ -581,20 +635,80 @@ window.PracticePage = (() => {
       renderer.setBoard(gameState.board);
       renderer.setLastMove(choice.from, choice.to);
     }
-    appendPracticeMove({ color: moverColor, from: choice.from, to: choice.to, action: 'move' });
+    appendPracticeMove({ color: moverColor, from: choice.from, to: choice.to, action: choice.options?.promote ? 'promote' : choice.options?.demote ? 'demote' : 'move' });
     setInfo(`Computer played ${formatSquare(choice.from)} → ${formatSquare(choice.to)}.`);
     updateStatus();
     queueComputerMoveIfNeeded();
   }
 
-  function pickComputerMove(state) {
-    return rankCandidateMoves(state, state.turn, 1)[0] || null;
+  // ─── Difficulty helpers ────────────────────────────────
+  function difficultyLabel(d) {
+    if (d >= 0.95) return 'Max';
+    if (d >= 0.75) return 'Hard';
+    if (d >= 0.50) return 'Medium';
+    if (d >= 0.25) return 'Easy';
+    return 'Random';
   }
 
-  function rankCandidateMoves(state, color = state.turn, limit = 5) {
+  /**
+   * pickRandomMove — picks any legal move for `color` that does NOT start
+   * from the same square the bot moved from last turn (anti-shuffle).
+   * Falls back to the full move pool if filtering would leave nothing.
+   */
+  function pickRandomMove(state, color) {
+    const all = enumerateCandidateMoves(state, color);
+    const filtered = lastBotFromSquare
+      ? all.filter(m => !(m.from[0] === lastBotFromSquare[0] && m.from[1] === lastBotFromSquare[1]))
+      : all;
+    const pool = filtered.length > 0 ? filtered : all;
+    if (pool.length === 0) return null;
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  /**
+   * pickComputerMove — selects a move according to the difficulty slider:
+   *
+   *  d = 1.0 → always pick rank #1 (best scored move)
+   *  d = 0.5 → always pick rank #5 (worst of top-5)
+   *  d in (0.5, 1.0) → deterministically pick rank ⌊(1−d)×8⌋ of top-5
+   *
+   *  d = 0.5 to 0.0:
+   *    with probability d  → pick rank #5
+   *    with probability 1−d → pick a random legal move (no same-piece repeat)
+   */
+  function pickComputerMove(state) {
+    const top5 = rankCandidateMoves(state, state.turn, 5, lastBotFromSquare);
+    if (top5.length === 0) return null;
+
+    const d = Math.max(0, Math.min(1, botDifficulty));
+
+    if (d >= 0.5) {
+      // Map [0.5 → 4, 1.0 → 0] linearly, clamp to available
+      const idx = Math.min(top5.length - 1, Math.round((1 - d) * 8));
+      return top5[idx];
+    }
+
+    // d < 0.5: probabilistic blend
+    if (Math.random() < d) {
+      // Pick rank #5 (or worst available)
+      return top5[top5.length - 1];
+    }
+    return pickRandomMove(state, state.turn);
+  }
+
+  function rankCandidateMoves(state, color = state.turn, limit = 5, avoidFrom = null) {
     const candidates = enumerateCandidateMoves(state, color)
       .map((candidate) => scoreCandidateMove(state, candidate, color))
       .filter(Boolean);
+
+    // Penalise moving the piece that was just moved (anti-shuffle heuristic).
+    if (avoidFrom) {
+      for (const c of candidates) {
+        if (c.from[0] === avoidFrom[0] && c.from[1] === avoidFrom[1]) {
+          c.score -= 1.5;
+        }
+      }
+    }
 
     candidates.sort((a, b) => b.score - a.score || Math.random() - 0.5);
     return candidates.slice(0, limit);
@@ -631,6 +745,20 @@ window.PracticePage = (() => {
               piece,
               target: null,
               label: `${formatSquare([r, c])} promote`,
+            });
+          }
+        }
+
+        if (piece.pendingCastlePromotion) {
+          const probe = HostageEngine.applyMove(state, [r, c], [r, c], { castlePromote: true });
+          if (probe.valid) {
+            candidates.push({
+              from: [r, c],
+              to: [r, c],
+              options: { castlePromote: true },
+              piece,
+              target: null,
+              label: `${formatSquare([r, c])} castle-promote`,
             });
           }
         }
@@ -701,9 +829,25 @@ window.PracticePage = (() => {
       score += getPieceValue(candidate.target) * 2.5;
     }
     if (meta.promoted) score += 5;
+    if (meta.castlePromoted) score += 5;
     if (meta.demoted) score -= 1;
     if (meta.pushed) score += 1.5;
     if (meta.royalMeet) score += 6;
+
+    // Bonus for advancing a pawn toward the enemy castle, penalty for retreating.
+    if (candidate.piece?.type === 'pawn' && !candidate.options?.promote && !candidate.options?.demote && !candidate.options?.castlePromote) {
+      const from = candidate.from;
+      const to = candidate.to;
+      if (from[0] !== to[0] || from[1] !== to[1]) {
+        const enemyCastle = HostageEngine.CASTLE_HOME?.[color === 'white' ? 'black' : 'white'];
+        if (enemyCastle) {
+          const fromDist = Math.max(Math.abs(from[0] - enemyCastle[0]), Math.abs(from[1] - enemyCastle[1]));
+          const toDist   = Math.max(Math.abs(to[0]   - enemyCastle[0]), Math.abs(to[1]   - enemyCastle[1]));
+          if (toDist < fromDist) score += 0.5;  // advancing toward promotion
+          else if (toDist > fromDist) score -= 0.6; // retreating
+        }
+      }
+    }
 
     score += getMobilityScore(state.board, color) * 0.04;
     score -= getMobilityScore(state.board, enemy) * 0.03;
@@ -718,10 +862,10 @@ window.PracticePage = (() => {
     const values = {
       king: 15,   
       queen: 10,
-      rook: 6,
-      fort: 4,
-      bishop: 4,
-      knight: 3,
+      rook: 7,
+      fort: 3,
+      bishop: 5,
+      knight: 4,
       pawn: 1.5,
     };
     if (piece.type === 'pawn' && piece.paired) return values.pawn * 2;

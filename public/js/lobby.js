@@ -10,7 +10,10 @@ window.LobbyPage = (() => {
   let hiddenDiagnostics = [];
 
   function getUser() {
-    try { return JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user')); } catch { return null; }
+    try {
+      return JSON.parse(localStorage.getItem('hostage_user') || localStorage.getItem('HostageChess_user'))
+        || JSON.parse(localStorage.getItem('hostage_guest'));
+    } catch { return null; }
   }
 
   function getAdminApiKey() {
@@ -92,6 +95,12 @@ window.LobbyPage = (() => {
     const app = document.getElementById('app');
     app.innerHTML = `
       <div class="lobby-page">
+        ${user.isGuest ? `
+        <div class="guest-banner" id="guest-banner" role="alert">
+          <span>👤 You are playing in <strong>Guest Mode</strong>. Your stats are saved locally only and games won't affect ranked ELO. <br>
+          <a href="#" id="guest-register-link" style="margin-left:8px;">Register for a full account →</a></span>
+          <button style="display:none" class="guest-banner-close" id="guest-banner-close" title="Dismiss">✕</button>
+        </div>` : ''}
         <div class="lobby-header">
           <div>
             <h1>Hostage Chess Lobby</h1>
@@ -101,10 +110,10 @@ window.LobbyPage = (() => {
             <button id="show-create-form-btn">Create Game</button>
             <button id="stats-btn" class="btn-secondary">Stats</button>
             <button id="review-btn" class="btn-secondary">Review Game</button>
-            <button id="practice-btn" class="btn-secondary">Practice</button>
+            <button id="practice-btn" class="btn-secondary">Practice/Play Bot</button>
             <button id="experimental-btn" class="btn-secondary">Experimental Mode</button>
             <button id="rules-btn" class="btn-secondary">How to Play</button>
-            <button id="logout-btn" class="btn-secondary">Logout</button>
+            <button id="logout-btn" class="btn-secondary">${user.isGuest ? 'Exit Guest Mode' : 'Logout'}</button>
           </div>
         </div>
 
@@ -218,8 +227,24 @@ window.LobbyPage = (() => {
     document.getElementById('logout-btn').addEventListener('click', () => {
       localStorage.removeItem('hostage_user');
       localStorage.removeItem('HostageChess_user');
+      localStorage.removeItem('hostage_guest');
       window.App.navigate('/');
     });
+
+    // Guest-mode banner
+    if (user.isGuest) {
+      const closeBanner = document.getElementById('guest-banner-close');
+      if (closeBanner) closeBanner.addEventListener('click', () => {
+        const banner = document.getElementById('guest-banner');
+        if (banner) banner.style.display = 'none';
+      });
+      const regLink = document.getElementById('guest-register-link');
+      if (regLink) regLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        localStorage.removeItem('hostage_guest');
+        window.App.navigate('/');
+      });
+    }
 
     const searchInput = document.getElementById('user-search-input');
     if (searchInput) {
@@ -284,9 +309,17 @@ window.LobbyPage = (() => {
   async function loadUserSummary() {
     const user = getUser();
     if (!user) return;
-    userStatsSummary = await fetchUserStats(user.id);
     const infoEl = document.getElementById('lobby-user-info');
     if (!infoEl) return;
+
+    if (user.isGuest) {
+      let gs = { wins: 0, losses: 0, draws: 0, gamesPlayed: 0, elo: 1200 };
+      try { gs = { ...gs, ...(JSON.parse(localStorage.getItem('hostage_guest_stats') || '{}')) }; } catch {}
+      infoEl.innerHTML = `Playing as <strong>${user.username}</strong> <span class="guest-badge">GUEST</span> · Local ELO <strong>${gs.elo}</strong> · ${gs.wins}W/${gs.losses}L/${gs.draws}D`;
+      return;
+    }
+
+    userStatsSummary = await fetchUserStats(user.id);
 
     if (!userStatsSummary) {
       infoEl.innerHTML = `Playing as <strong>${user.username}</strong>`;
@@ -533,7 +566,11 @@ window.LobbyPage = (() => {
       const res = await fetch('/api/games', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, gameName, maxPlayers, timerMode, timerValue, timeControl }),
+        body: JSON.stringify({
+          userId: user.id,
+          gameName, maxPlayers, timerMode, timerValue, timeControl,
+          ...(user.isGuest ? { isGuest: true, guestId: user.id, guestUsername: user.username } : {}),
+        }),
       });
       if (res.ok) {
         document.getElementById('create-form-wrap').style.display = 'none';
@@ -553,7 +590,10 @@ window.LobbyPage = (() => {
       const res = await fetch(`/api/games/${gameId}/join`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id }),
+        body: JSON.stringify({
+          userId: user.id,
+          ...(user.isGuest ? { isGuest: true, guestId: user.id, guestUsername: user.username } : {}),
+        }),
       });
       const data = await res.json();
       if (res.ok) {

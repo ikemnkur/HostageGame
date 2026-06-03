@@ -87,6 +87,22 @@ window.AuthPage = (() => {
         </div>
 
         <a href="/rules" class="rules-link" onclick="event.preventDefault(); window.App.navigate('/rules');">How to Play →</a>
+
+        <div class="auth-divider"><span>or</span></div>
+        <button type="button" class="btn-secondary guest-mode-btn" onclick="AuthPage._showGuestPanel()">Play as Guest</button>
+
+        <!-- ── Guest mode panel ── -->
+        <div id="guest-panel" style="display:none; margin-top:16px;">
+          <p class="auth-info">Guest stats are saved locally only — no account needed.<br>Create an account for ranked play and full features.</p>
+          <form id="guest-form" class="auth-form">
+            <input type="text" id="guest-name" placeholder="Choose a display name (2–15 chars)" maxlength="15" autocomplete="off" />
+            <p class="error-msg" id="guest-error"></p>
+            <button type="submit" id="guest-btn">Enter Lobby as Guest</button>
+          </form>
+          <p class="auth-link" style="margin-top:12px">
+            <a href="#" onclick="AuthPage._showTab('login'); return false;">← Back to sign in</a>
+          </p>
+        </div>
       </div>
     `;
 
@@ -103,6 +119,7 @@ window.AuthPage = (() => {
     document.getElementById('verify-form').addEventListener('submit', _handleVerify);
     document.getElementById('forgot-form').addEventListener('submit', _handleForgot);
     document.getElementById('reset-form').addEventListener('submit', _handleReset);
+    document.getElementById('guest-form').addEventListener('submit', _handleGuestPlay);
   }
 
   // ─── internal state ───────────────────────────────────────
@@ -388,6 +405,49 @@ window.AuthPage = (() => {
     }
   }
 
-  return { render, _showTab, _showForgot, _resendCode };
+  // ─── guest mode ───────────────────────────────────────────
+  function _showGuestPanel() {
+    document.getElementById('login-form').style.display    = 'none';
+    document.getElementById('register-form').style.display = 'none';
+    document.getElementById('verify-panel').style.display  = 'none';
+    document.getElementById('forgot-panel').style.display  = 'none';
+    document.getElementById('guest-panel').style.display   = '';
+    document.querySelectorAll('.auth-tabs').forEach(el => el.style.display = 'none');
+  }
+
+  function _handleGuestPlay(e) {
+    e.preventDefault();
+    const errorEl = document.getElementById('guest-error');
+    errorEl.textContent = '';
+
+    const raw = document.getElementById('guest-name').value.trim();
+    if (!raw || raw.length < 2) {
+      errorEl.textContent = 'Please enter a name (at least 2 characters).';
+      return;
+    }
+    // Sanitise: only letters, digits, spaces, hyphens and underscores
+    const sanitised = raw.replace(/[^a-zA-Z0-9 _-]/g, '').trim().slice(0, 15);
+    if (sanitised.length < 2) {
+      errorEl.textContent = 'Name must contain at least 2 alphanumeric characters.';
+      return;
+    }
+
+    const guestId = 'guest-' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+    const guestUser = { isGuest: true, id: guestId, username: 'Guest_' + sanitised };
+
+    localStorage.setItem('hostage_guest', JSON.stringify(guestUser));
+    // Ensure no stale registered session conflicts
+    localStorage.removeItem('hostage_user');
+    localStorage.removeItem('HostageChess_user');
+
+    // Initialise local guest stats if not already present
+    if (!localStorage.getItem('hostage_guest_stats')) {
+      localStorage.setItem('hostage_guest_stats', JSON.stringify({ wins: 0, losses: 0, draws: 0, gamesPlayed: 0, elo: 1200 }));
+    }
+
+    window.App.navigate('/lobby');
+  }
+
+  return { render, _showTab, _showForgot, _resendCode, _showGuestPanel };
 })();
 
